@@ -5,10 +5,8 @@ import App from './App'
 import './index.css'
 
 /**
- * LaunchDarkly client-side ID — set VITE_LD_CLIENT_ID in .env
- * Create a client-side ID in your LD project settings.
- * Without it, the UI still runs against server local flag fallbacks;
- * streaming kill requires a real client-side ID.
+ * Set VITE_LD_CLIENT_ID for streaming flag updates (see README Configuration).
+ * Without it, the UI still runs against server local policy fallbacks.
  */
 const clientSideId = import.meta.env.VITE_LD_CLIENT_ID as string | undefined
 
@@ -17,7 +15,7 @@ async function boot() {
 
   if (!clientSideId) {
     console.warn(
-      '[mandate] VITE_LD_CLIENT_ID missing — client SDK disabled. Server local flag fallbacks still apply.',
+      '[mandate] VITE_LD_CLIENT_ID missing — streaming flags off. Server local policy fallbacks still apply.',
     )
     root.render(
       <StrictMode>

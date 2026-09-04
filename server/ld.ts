@@ -1,14 +1,6 @@
 /**
- * LaunchDarkly server evaluation.
- *
- * Create these flags in your LD project (see README):
- * - decisioner.live (boolean) — release / remediate kill
- * - decisioner.route (string: fast | model)
- * - decisioner.experiment (string: control | treatment)
- * - capture.live (boolean) — irreversible capture gate
- * - spend.cap.cents (number) — fast-path spend cap
- *
- * AI Config key defaults to mandate-decisioner (LD_AI_CONFIG_KEY).
+ * Server-side policy / flag evaluation.
+ * Set LD_SDK_KEY — see README Configuration for flag keys and decision config.
  */
 
 import * as ld from '@launchdarkly/node-server-sdk'
@@ -37,7 +29,7 @@ let client: ld.LDClient | null = null
 let aiClient: ReturnType<typeof initAi> | null = null
 let ready = false
 
-/** Local kill latch used by /api/remediate when demonstrating without flipping the LD dashboard. */
+/** Local kill latch used by /api/remediate when the flag dashboard is unavailable. */
 let localKill = false
 
 export function setLocalKill(v: boolean) {
@@ -64,7 +56,7 @@ function toLdContext(attrs: LdContextAttrs): ld.LDContext {
 export async function initLd(): Promise<void> {
   const sdkKey = process.env.LD_SDK_KEY
   if (!sdkKey) {
-    console.warn('[ld] LD_SDK_KEY missing — using local flag fallbacks. Create flags per README.')
+    console.warn('[ld] LD_SDK_KEY missing — using local policy fallbacks. See README Configuration.')
     ready = true
     return
   }
