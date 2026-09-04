@@ -77,6 +77,20 @@ button:disabled {
   margin-bottom: 1rem;
 }
 
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.brand-mark {
+  display: block;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: 7px;
+}
+
 .topbar h1 {
   margin: 0;
   font-size: 1.35rem;
@@ -84,7 +98,7 @@ button:disabled {
 }
 
 .topbar p {
-  margin: 0.25rem 0 0;
+  margin: 0.35rem 0 0;
   color: var(--muted);
   font-size: 0.92rem;
   max-width: 52rem;

@@ -415,7 +415,16 @@ function AppShell({
     <div className="app">
       <header className="topbar">
         <div>
-          <h1>Mandate</h1>
+          <div className="brand">
+            <img
+              className="brand-mark"
+              src="/favicon.svg"
+              width={28}
+              height={28}
+              alt=""
+            />
+            <h1>Mandate</h1>
+          </div>
           <p>
             Automated agent-spend authorization control plane. Watch and steer
             the decisioner at volume — audiences, live kill, model routing, and
