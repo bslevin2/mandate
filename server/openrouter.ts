@@ -429,7 +429,6 @@ export async function chatWithFallback(args: ChatArgs): Promise<ChatResult> {
 }
 
 export async function lookupGeneration(id: string): Promise<GenerationLookup> {
-  const apiKey = process.env.OPENROUTER_API_KEY?.trim()
   const empty: GenerationLookup = {
     id: id || null,
     model: null,
@@ -444,14 +443,15 @@ export async function lookupGeneration(id: string): Promise<GenerationLookup> {
     providerResponsesCount: null,
     error: null,
   }
-  if (!apiKey) {
-    return { ...empty, error: 'OPENROUTER_API_KEY missing. Set it in .env (server only).' }
-  }
   if (!id.trim()) {
     return { ...empty, error: 'generation id required' }
   }
   if (id.startsWith('sim_')) {
     return { ...empty, error: 'Simulator ids are local — look up only live generation ids' }
+  }
+  const apiKey = process.env.OPENROUTER_API_KEY?.trim()
+  if (!apiKey) {
+    return { ...empty, error: 'OPENROUTER_API_KEY missing. Set it in .env (server only).' }
   }
 
   try {

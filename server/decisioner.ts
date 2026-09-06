@@ -238,7 +238,7 @@ export async function decide(input: DecideInput): Promise<AuditRow> {
   )
   const previewPolicy = policyForAudience(input.audienceId, input.context, {
     allowProviderFailover: controls.allowProviderFailover,
-    preferredModel: process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini',
+    preferredModel: null,
   })
   const rawContext = {
     ...input.context,
@@ -409,7 +409,7 @@ export async function decide(input: DecideInput): Promise<AuditRow> {
 
   const policy = policyForAudience(input.audienceId, input.context, {
     allowProviderFailover: controls.allowProviderFailover,
-    preferredModel: model,
+    preferredModel: ai.source === 'launchdarkly' ? ai.model : null,
   })
 
   const chat = await chatWithFallback({

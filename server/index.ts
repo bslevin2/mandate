@@ -64,7 +64,7 @@ app.get('/api/status', async (req, res) => {
   const integrity = verifyChain()
   const inferencePolicy = policyForAudience(audienceId, context, {
     allowProviderFailover: controls.allowProviderFailover,
-    preferredModel: ai.model || process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini',
+    preferredModel: ai.source === 'launchdarkly' ? ai.model : null,
   })
 
   res.json({
