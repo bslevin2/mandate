@@ -8,9 +8,9 @@ Autonomous agents initiate card-network-style spend (amount, MCC, merchant, agen
 
 - **Audiences** — env, risk, MCC, and amount change which policy path runs (fast rules vs model) and which experiment treatment you are in, with a visible **targeting reason**
 - **Live kill** — freeze the decisioner without a deploy; the server fail-closes even if a client tries to bypass the UI
-- **Evidence** — decision config, prompt preview, model, cost, latency, request id for every model-path call
+- **Evidence** — decision config, prompt preview, requested vs served model, provider, cost, latency, request id, generation lookup
 - **Trust** — audit and replay scoped by tenant; hash-chained rows (`prevHash` → `rowHash`); cross-tenant replay denied
-- **Ops** — experiment scoreboard, in-app signals (optional webhook), break vs failover on the inference hop
+- **Ops** — experiment scoreboard, in-app signals (optional webhook), break vs app-hop vs provider failover on the inference hop
 
 ## Quick start
 
@@ -81,7 +81,10 @@ See [`.env.example`](.env.example):
 | `LD_SDK_KEY` | Server flag + decision-config evaluation |
 | `LD_AI_CONFIG_KEY` | Decision config key (default `mandate-decisioner`) |
 | `OPENROUTER_API_KEY` | Live inference (server only) |
-| `OPENROUTER_MODEL` / `OPENROUTER_FALLBACK_MODEL` | Primary and failover models |
+| `OPENROUTER_MODEL` | Default / decision-config primary |
+| `OPENROUTER_FALLBACK_MODEL` | Second model for **app hop** (a second HTTP request) |
+| `OPENROUTER_CHEAP_MODELS` | CSV for sandbox-low inference policy (`models[]`, sort by price) |
+| `OPENROUTER_STRONG_MODELS` | CSV for prod-high inference policy (`models[]`, sort by latency) |
 | `OPS_WEBHOOK_URL` | Optional Slack (or similar) webhook on kill / cost spikes |
 
 **LaunchDarkly** supplies live flags and decision configs. **OpenRouter** supplies live completions. Both are optional infrastructure for this product.
@@ -120,6 +123,18 @@ Suggested targeting:
 | Mode | Behavior |
 |------|----------|
 | **Simulator** (default without a provider key) | Deterministic JSON, `sim_*` request ids, labeled hop |
-| **Live** | Real provider calls (`OPENROUTER_API_KEY`) |
-| **Break (no fallback)** | Force primary failure; surface error |
-| **Failover** | Primary fails, then fallback hop (`fallback-after:…`) |
+| **Live** | Real provider calls (`OPENROUTER_API_KEY`) with `models[]`, `provider` prefs, and a stable `user` (audience/actor) |
+| **Break (fail-closed)** | Force primary failure; no `models[]`, no app hop |
+| **App hop** | Primary fails, then Mandate makes a **second HTTP request**. This is not provider failover |
+| **Allow provider failover** | Per-request `allow_fallbacks`. Off = strict endpoint |
+| **Force model path** | Skip fast-path so a cheap audience still hits inference |
+
+Audience → inference policy (when a model is called):
+
+| Audience | Policy | Routing |
+|----------|--------|---------|
+| sandbox-low, QA dogfood | cheap-price | `models[]` + sort price |
+| prod-high | strong-latency | `models[]` + sort latency + `data_collection=deny` |
+| blocked MCC | no-model | fast-path decline, no completion |
+
+Evidence shows requested models vs served model/provider, `usage.cost`, and request id. **Look up generation** calls `GET /api/v1/generation?id=` with the same inference key. **Key usage** calls `GET /api/v1/key` (never exposes the secret).

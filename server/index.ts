@@ -25,7 +25,8 @@ import {
   initLd,
   setLocalKill,
 } from './ld.js'
-import { hasOpenRouterKey, resolveInferenceMode } from './openrouter.js'
+import { hasOpenRouterKey, lookupGeneration, lookupKeyStatus, resolveInferenceMode } from './openrouter.js'
+import { policyForAudience } from './inference-policy.js'
 import { fireOpsWebhook, listOpsSignals } from './webhook.js'
 import type { AudienceId, AuthRequest, LdContextAttrs } from './types.js'
 
@@ -61,6 +62,10 @@ app.get('/api/status', async (req, res) => {
     JSON.stringify({ probe: true, mcc: context.mcc }),
   )
   const integrity = verifyChain()
+  const inferencePolicy = policyForAudience(audienceId, context, {
+    allowProviderFailover: controls.allowProviderFailover,
+    preferredModel: ai.model || process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini',
+  })
 
   res.json({
     decisionerLive: flags.decisionerLive,
@@ -75,6 +80,11 @@ app.get('/api/status', async (req, res) => {
     failoverDemo: controls.failoverDemo,
     networkDelayMs: controls.networkDelayMs,
     budgetUsd: controls.budgetUsd,
+    allowProviderFailover: controls.allowProviderFailover,
+    forceModelPath: controls.forceModelPath,
+    inferencePolicy: inferencePolicy.id,
+    requestedModels: inferencePolicy.requestedModels,
+    inferenceUser: inferencePolicy.user,
     flagSource: flags.source,
     spendCapCents: flags.spendCapCents,
     targetingReason: buildTargetingReason(
@@ -160,14 +170,32 @@ app.get('/api/fixtures/one', (_req, res) => {
 })
 
 app.post('/api/controls', (req, res) => {
-  const next = setControls({
-    breakPipe: req.body?.breakPipe,
-    failoverDemo: req.body?.failoverDemo,
-    inferenceMode: req.body?.inferenceMode,
-    networkDelayMs: req.body?.networkDelayMs,
-    budgetUsd: req.body?.budgetUsd,
-  })
+  const body = req.body ?? {}
+  const patch: Parameters<typeof setControls>[0] = {}
+  if ('breakPipe' in body) patch.breakPipe = Boolean(body.breakPipe)
+  if ('failoverDemo' in body) patch.failoverDemo = Boolean(body.failoverDemo)
+  if ('inferenceMode' in body) patch.inferenceMode = body.inferenceMode
+  if ('networkDelayMs' in body) patch.networkDelayMs = Number(body.networkDelayMs) || 0
+  if ('budgetUsd' in body) {
+    patch.budgetUsd = body.budgetUsd == null ? null : Number(body.budgetUsd)
+  }
+  if ('allowProviderFailover' in body) {
+    patch.allowProviderFailover = Boolean(body.allowProviderFailover)
+  }
+  if ('forceModelPath' in body) patch.forceModelPath = Boolean(body.forceModelPath)
+  const next = setControls(patch)
   res.json(next)
+})
+
+app.get('/api/inference/generation', async (req, res) => {
+  const id = typeof req.query.id === 'string' ? req.query.id : ''
+  const data = await lookupGeneration(id)
+  res.status(data.error ? 400 : 200).json(data)
+})
+
+app.get('/api/inference/key', async (_req, res) => {
+  const data = await lookupKeyStatus()
+  res.status(data.error ? 400 : 200).json(data)
 })
 
 /**

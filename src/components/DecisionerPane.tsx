@@ -10,6 +10,8 @@ interface Props {
   lastLatencyMs: number | null
   targetingReason: string | null
   flagSource: string | null
+  inferencePolicy: string | null
+  requestedModels: string[] | null
   experiment: {
     controlApprove: number
     controlDecline: number
@@ -30,6 +32,8 @@ export function DecisionerPane({
   lastLatencyMs,
   targetingReason,
   flagSource,
+  inferencePolicy,
+  requestedModels,
   experiment,
   onBurstExperiment,
   pending,
@@ -56,6 +60,12 @@ export function DecisionerPane({
       {targetingReason && (
         <p className="mono muted" style={{ marginTop: 0 }}>
           Targeting: {targetingReason}
+        </p>
+      )}
+      {inferencePolicy && (
+        <p className="mono muted" style={{ marginTop: 0 }}>
+          Inference policy: {inferencePolicy}
+          {requestedModels?.length ? ` · ${requestedModels.join(' → ')}` : ''}
         </p>
       )}
 

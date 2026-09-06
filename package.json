@@ -9,6 +9,7 @@
     "dev:api": "tsx watch server/index.ts",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
+    "test": "tsx --test server/*.test.ts",
     "preview": "vite preview",
     "start:api": "tsx server/index.ts"
   },

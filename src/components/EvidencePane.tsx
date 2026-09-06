@@ -14,6 +14,10 @@ interface Props {
   onBreakPipe: (v: boolean) => void
   failoverDemo: boolean
   onFailoverDemo: (v: boolean) => void
+  allowProviderFailover: boolean
+  onAllowProviderFailover: (v: boolean) => void
+  forceModelPath: boolean
+  onForceModelPath: (v: boolean) => void
   inferenceMode: 'live' | 'simulator'
   onInferenceMode: (m: 'live' | 'simulator') => void
   networkDelayMs: number
@@ -32,6 +36,11 @@ interface Props {
   onBreakIntegrity: () => void
   onRestoreIntegrity: () => void
   tenant: string
+  inferencePolicy: string | null
+  onLookupGeneration: () => void
+  generationPending: boolean
+  onLookupKey: () => void
+  keyUsageLabel: string | null
 }
 
 export function EvidencePane({
@@ -40,6 +49,10 @@ export function EvidencePane({
   onBreakPipe,
   failoverDemo,
   onFailoverDemo,
+  allowProviderFailover,
+  onAllowProviderFailover,
+  forceModelPath,
+  onForceModelPath,
   inferenceMode,
   onInferenceMode,
   networkDelayMs,
@@ -58,6 +71,11 @@ export function EvidencePane({
   onBreakIntegrity,
   onRestoreIntegrity,
   tenant,
+  inferencePolicy,
+  onLookupGeneration,
+  generationPending,
+  onLookupKey,
+  keyUsageLabel,
 }: Props) {
   return (
     <section className="panel">
@@ -91,7 +109,7 @@ export function EvidencePane({
             checked={breakPipe}
             onChange={(e) => onBreakPipe(e.target.checked)}
           />
-          Break (no fallback)
+          Break (fail-closed)
         </label>
         <label
           className="field"
@@ -102,7 +120,7 @@ export function EvidencePane({
             checked={failoverDemo}
             onChange={(e) => onFailoverDemo(e.target.checked)}
           />
-          Failover demo
+          App hop (2nd request)
         </label>
         <label className="field">
           Network delay (ms)
@@ -133,6 +151,39 @@ export function EvidencePane({
         <button onClick={() => onRemediate(false)}>Restore</button>
       </div>
       <div className="row">
+        <label
+          className="field"
+          style={{ flexDirection: 'row', alignItems: 'center', gap: '0.4rem' }}
+        >
+          <input
+            type="checkbox"
+            checked={allowProviderFailover}
+            onChange={(e) => onAllowProviderFailover(e.target.checked)}
+          />
+          Allow provider failover
+        </label>
+        <label
+          className="field"
+          style={{ flexDirection: 'row', alignItems: 'center', gap: '0.4rem' }}
+        >
+          <input
+            type="checkbox"
+            checked={forceModelPath}
+            onChange={(e) => onForceModelPath(e.target.checked)}
+          />
+          Force model path
+        </label>
+        <span className="badge">
+          inference policy · {inferencePolicy ?? evidence?.inferencePolicy ?? '—'}
+        </span>
+      </div>
+      <p className="muted" style={{ marginTop: 0 }}>
+        App hop is a second HTTP call after a broken primary — not provider
+        failover. Provider failover is the per-request allow/deny on the same
+        call. Force model path skips fast-path so a cheap audience still hits
+        inference.
+      </p>
+      <div className="row">
         <label className="field">
           Replay by request ID
           <input
@@ -142,9 +193,17 @@ export function EvidencePane({
           />
         </label>
         <button onClick={onReplay}>Replay</button>
+        <button
+          disabled={generationPending || !evidence?.requestId}
+          onClick={onLookupGeneration}
+        >
+          Look up generation
+        </button>
+        <button onClick={onLookupKey}>Key usage</button>
         <span className="badge warn">
           session spend · ${sessionSpendUsd.toFixed(4)}
         </span>
+        {keyUsageLabel && <span className="badge">{keyUsageLabel}</span>}
       </div>
 
       <h2 style={{ marginTop: '1rem' }}>Trust · isolation & integrity</h2>
@@ -179,6 +238,31 @@ export function EvidencePane({
             <dd>
               {evidence.inferenceMode ?? '—'} · {evidence.hop ?? '—'}
             </dd>
+            <dt>inference policy</dt>
+            <dd>
+              {evidence.inferencePolicy ?? '—'}
+              {evidence.forceModelPath ? ' · force model path' : ''}
+            </dd>
+            <dt>requested models</dt>
+            <dd>
+              {evidence.requestedModels?.length
+                ? evidence.requestedModels.join(' → ')
+                : '—'}
+            </dd>
+            <dt>served model</dt>
+            <dd>{evidence.model ?? '—'}</dd>
+            <dt>served provider</dt>
+            <dd>{evidence.servedProvider ?? evidence.generationLookup?.providerName ?? '—'}</dd>
+            <dt>actor (user)</dt>
+            <dd>{evidence.inferenceUser ?? '—'}</dd>
+            <dt>provider failover</dt>
+            <dd>
+              {evidence.allowProviderFailover == null
+                ? '—'
+                : evidence.allowProviderFailover
+                  ? 'allow'
+                  : 'strict'}
+            </dd>
             <dt>targeting</dt>
             <dd>{evidence.targetingReason ?? '—'}</dd>
             <dt>route / treatment</dt>
@@ -192,8 +276,6 @@ export function EvidencePane({
             </dd>
             <dt>prompt preview</dt>
             <dd>{evidence.promptPreview ?? '—'}</dd>
-            <dt>model</dt>
-            <dd>{evidence.model ?? '—'}</dd>
             <dt>latency</dt>
             <dd>
               {evidence.latencyMs == null ? '—' : `${evidence.latencyMs}ms`}
@@ -210,6 +292,24 @@ export function EvidencePane({
             </dd>
             <dt>request_id</dt>
             <dd>{evidence.requestId ?? '—'}</dd>
+            <dt>generation</dt>
+            <dd>
+              {evidence.generationLookup
+                ? [
+                    evidence.generationLookup.providerName,
+                    evidence.generationLookup.totalCost != null
+                      ? `$${evidence.generationLookup.totalCost.toFixed(6)}`
+                      : null,
+                    evidence.generationLookup.finishReason,
+                    evidence.generationLookup.providerResponsesCount != null
+                      ? `attempts ${evidence.generationLookup.providerResponsesCount}`
+                      : null,
+                    evidence.generationLookup.error,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ') || 'looked up'
+                : '—'}
+            </dd>
             <dt>reason</dt>
             <dd>{evidence.reason}</dd>
             <dt>error</dt>

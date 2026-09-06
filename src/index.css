@@ -203,7 +203,7 @@ label.field input {
 
 .kv {
   display: grid;
-  grid-template-columns: 9rem 1fr;
+  grid-template-columns: 11rem 1fr;
   gap: 0.25rem 0.75rem;
   font-size: 0.85rem;
 }

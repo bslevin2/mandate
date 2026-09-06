@@ -38,6 +38,10 @@ interface Status {
   integrityValid?: boolean
   integrityBrokenAt?: string | null
   tipHash?: string | null
+  inferencePolicy?: string | null
+  requestedModels?: string[] | null
+  allowProviderFailover?: boolean
+  forceModelPath?: boolean
 }
 
 function emptyEvidence(
@@ -73,6 +77,13 @@ function emptyEvidence(
     targetingReason: null,
     flagSource: null,
     inferenceMode: null,
+    requestedModels: null,
+    servedProvider: null,
+    inferencePolicy: null,
+    allowProviderFailover: null,
+    inferenceUser: null,
+    generationLookup: null,
+    forceModelPath: null,
     ...partial,
   }
 }
@@ -113,6 +124,8 @@ function AppShell({
   })
   const [breakPipe, setBreakPipe] = useState(false)
   const [failoverDemo, setFailoverDemo] = useState(false)
+  const [allowProviderFailover, setAllowProviderFailover] = useState(true)
+  const [forceModelPath, setForceModelPath] = useState(false)
   const [inferenceMode, setInferenceMode] = useState<'live' | 'simulator'>(
     'simulator',
   )
@@ -120,6 +133,8 @@ function AppShell({
   const [budgetUsd, setBudgetUsd] = useState<number | null>(null)
   const [shadow, setShadow] = useState(false)
   const [replayId, setReplayId] = useState('')
+  const [generationPending, setGenerationPending] = useState(false)
+  const [keyUsageLabel, setKeyUsageLabel] = useState<string | null>(null)
   const [clientLive, setClientLive] = useState(true)
   const [clientRoute, setClientRoute] = useState<RouteMode | null>(null)
 
@@ -201,6 +216,10 @@ function AppShell({
     if (typeof data.breakPipe === 'boolean') setBreakPipe(data.breakPipe)
     if (typeof data.failoverDemo === 'boolean')
       setFailoverDemo(Boolean(data.failoverDemo))
+    if (typeof data.allowProviderFailover === 'boolean')
+      setAllowProviderFailover(data.allowProviderFailover)
+    if (typeof data.forceModelPath === 'boolean')
+      setForceModelPath(data.forceModelPath)
   }, [contextAttrs, audienceId])
 
   useEffect(() => {
@@ -222,6 +241,8 @@ function AppShell({
       inferenceMode?: 'live' | 'simulator'
       networkDelayMs?: number
       budgetUsd?: number | null
+      allowProviderFailover?: boolean
+      forceModelPath?: boolean
     }) => {
       await fetch('/api/controls', {
         method: 'POST',
@@ -411,6 +432,55 @@ function AppShell({
     await refreshAudit()
   }
 
+  const onLookupGeneration = async () => {
+    const id = evidence?.requestId?.trim()
+    if (!id) return
+    setGenerationPending(true)
+    try {
+      const res = await fetch(
+        `/api/inference/generation?id=${encodeURIComponent(id)}`,
+      )
+      const data = await res.json()
+      setEvidence((prev) => {
+        if (!prev) return prev
+        const hop =
+          typeof data.providerResponsesCount === 'number' &&
+          data.providerResponsesCount > 1
+            ? 'provider-failover'
+            : prev.hop
+        return {
+          ...prev,
+          hop,
+          generationLookup: data,
+          servedProvider: prev.servedProvider ?? data.providerName ?? null,
+        }
+      })
+    } finally {
+      setGenerationPending(false)
+    }
+  }
+
+  const onLookupKey = async () => {
+    const res = await fetch('/api/inference/key')
+    const data = (await res.json()) as {
+      label?: string | null
+      usage?: number | null
+      limitRemaining?: number | null
+      error?: string | null
+    }
+    if (data.error) {
+      setKeyUsageLabel(data.error)
+      return
+    }
+    const usage =
+      typeof data.usage === 'number' ? `$${data.usage.toFixed(4)} used` : 'usage n/a'
+    const remaining =
+      typeof data.limitRemaining === 'number'
+        ? ` · ${data.limitRemaining.toFixed(4)} left`
+        : ''
+    setKeyUsageLabel(`${data.label ?? 'key'} · ${usage}${remaining}`)
+  }
+
   return (
     <div className="app">
       <header className="topbar">
@@ -512,6 +582,12 @@ function AppShell({
             evidence?.targetingReason ?? status.targetingReason ?? null
           }
           flagSource={status.flagSource ?? null}
+          inferencePolicy={
+            evidence?.inferencePolicy ?? status.inferencePolicy ?? null
+          }
+          requestedModels={
+            evidence?.requestedModels ?? status.requestedModels ?? null
+          }
           experiment={experiment}
           onBurstExperiment={() => void burst(12)}
           pending={pending}
@@ -529,6 +605,16 @@ function AppShell({
             setFailoverDemo(v)
             if (v) setBreakPipe(false)
             void pushControls({ failoverDemo: v, breakPipe: false })
+          }}
+          allowProviderFailover={allowProviderFailover}
+          onAllowProviderFailover={(v) => {
+            setAllowProviderFailover(v)
+            void pushControls({ allowProviderFailover: v })
+          }}
+          forceModelPath={forceModelPath}
+          onForceModelPath={(v) => {
+            setForceModelPath(v)
+            void pushControls({ forceModelPath: v })
           }}
           inferenceMode={inferenceMode}
           onInferenceMode={(m) => {
@@ -557,6 +643,11 @@ function AppShell({
           onBreakIntegrity={() => void onBreakIntegrity()}
           onRestoreIntegrity={() => void onRestoreIntegrity()}
           tenant={contextAttrs.tenant}
+          inferencePolicy={status.inferencePolicy ?? null}
+          onLookupGeneration={() => void onLookupGeneration()}
+          generationPending={generationPending}
+          onLookupKey={() => void onLookupKey()}
+          keyUsageLabel={keyUsageLabel}
         />
         <AuditFeed
           rows={rows}

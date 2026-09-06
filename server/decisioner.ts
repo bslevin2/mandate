@@ -17,6 +17,7 @@ import {
   resolveInferenceMode,
   type InferenceMode,
 } from './openrouter.js'
+import { policyForAudience } from './inference-policy.js'
 import { fireOpsWebhook } from './webhook.js'
 import type {
   AudienceId,
@@ -141,6 +142,13 @@ function emptyEvidence(partial: Partial<Evidence>): Evidence {
     targetingReason: null,
     flagSource: null,
     inferenceMode: null,
+    requestedModels: null,
+    servedProvider: null,
+    inferencePolicy: null,
+    allowProviderFailover: null,
+    inferenceUser: null,
+    generationLookup: null,
+    forceModelPath: null,
     ...partial,
   }
 }
@@ -151,6 +159,10 @@ export interface RuntimeControls {
   inferenceMode: InferenceMode
   networkDelayMs: number
   budgetUsd: number | null
+  /** Per-request provider.allow_fallbacks. Default true. */
+  allowProviderFailover: boolean
+  /** Skip fast-path so sandbox-low still exercises the cheap model hop. */
+  forceModelPath: boolean
 }
 
 function defaultInferenceMode(): InferenceMode {
@@ -163,6 +175,8 @@ let controls: RuntimeControls = {
   inferenceMode: defaultInferenceMode(),
   networkDelayMs: 0,
   budgetUsd: null,
+  allowProviderFailover: true,
+  forceModelPath: false,
 }
 
 export function getControls() {
@@ -170,8 +184,14 @@ export function getControls() {
 }
 
 export function setControls(patch: Partial<RuntimeControls>) {
-  const next = { ...controls, ...patch }
-  // Mutual exclusion: break vs failover
+  const next = { ...controls }
+  for (const key of Object.keys(patch) as Array<keyof RuntimeControls>) {
+    const value = patch[key]
+    if (value !== undefined) {
+      ;(next as RuntimeControls)[key] = value as never
+    }
+  }
+  // Mutual exclusion: break vs app hop
   if (patch.breakPipe === true) next.failoverDemo = false
   if (patch.failoverDemo === true) next.breakPipe = false
   if (patch.inferenceMode) {
@@ -216,6 +236,10 @@ export async function decide(input: DecideInput): Promise<AuditRow> {
     flags.treatment,
     flags.source,
   )
+  const previewPolicy = policyForAudience(input.audienceId, input.context, {
+    allowProviderFailover: controls.allowProviderFailover,
+    preferredModel: process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini',
+  })
   const rawContext = {
     ...input.context,
     merchant: input.auth.merchant,
@@ -231,6 +255,11 @@ export async function decide(input: DecideInput): Promise<AuditRow> {
     targetingReason,
     flagSource: flags.source as 'launchdarkly' | 'local-fallback',
     inferenceMode,
+    requestedModels: previewPolicy.requestedModels,
+    inferencePolicy: previewPolicy.id,
+    allowProviderFailover: controls.allowProviderFailover,
+    inferenceUser: previewPolicy.user,
+    forceModelPath: controls.forceModelPath,
   }
 
   if (!flags.decisionerLive || open) {
@@ -331,7 +360,8 @@ export async function decide(input: DecideInput): Promise<AuditRow> {
   const forceModel =
     input.breakPipe ||
     controls.breakPipe ||
-    controls.failoverDemo
+    controls.failoverDemo ||
+    controls.forceModelPath
 
   if (flags.route === 'fast' && !forceModel) {
     const decision: Decision =
@@ -377,8 +407,13 @@ export async function decide(input: DecideInput): Promise<AuditRow> {
     messages.find((m) => m.role === 'system')?.content?.slice(0, 280) ??
     ai.systemPrompt.slice(0, 280)
 
+  const policy = policyForAudience(input.audienceId, input.context, {
+    allowProviderFailover: controls.allowProviderFailover,
+    preferredModel: model,
+  })
+
   const chat = await chatWithFallback({
-    model,
+    model: policy.requestedModels[0] || model,
     messages,
     breakPipe: input.breakPipe || controls.breakPipe,
     failoverDemo: controls.failoverDemo,
@@ -391,6 +426,8 @@ export async function decide(input: DecideInput): Promise<AuditRow> {
       risk_tier: input.context.risk_tier,
       env: input.context.env,
     },
+    policy,
+    allowProviderFailover: controls.allowProviderFailover,
   })
 
   const parsed = chat.content ? parseDecision(chat.content) : null
@@ -463,6 +500,12 @@ export async function decide(input: DecideInput): Promise<AuditRow> {
     shadowDiff,
     captureAllowed: flags.captureLive,
     circuitOpen: open,
+    requestedModels: chat.requestedModels,
+    servedProvider: chat.servedProvider,
+    inferencePolicy: chat.inferencePolicy ?? previewPolicy.id,
+    allowProviderFailover: chat.allowProviderFailover,
+    inferenceUser: chat.inferenceUser,
+    forceModelPath: controls.forceModelPath,
   })
 
   await trackMetric(

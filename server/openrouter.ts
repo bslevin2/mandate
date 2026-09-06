@@ -1,3 +1,9 @@
+import {
+  labelInferenceHop,
+  type InferencePolicy,
+  type ProviderPrefs,
+} from './inference-policy.js'
+
 export interface ChatResult {
   content: string
   model: string
@@ -8,6 +14,11 @@ export interface ChatResult {
   costUsd: number | null
   hop: string
   error: string | null
+  requestedModels: string[]
+  servedProvider: string | null
+  inferenceUser: string | null
+  allowProviderFailover: boolean
+  inferencePolicy: string | null
 }
 
 export type InferenceMode = 'live' | 'simulator'
@@ -15,9 +26,9 @@ export type InferenceMode = 'live' | 'simulator'
 export interface ChatArgs {
   model: string
   messages: Array<{ role: string; content: string }>
-  /** Force a bad model id; do NOT run fallback (surface error). */
+  /** Force a bad model id; do NOT run app hop or models[] (surface error). */
   breakPipe?: boolean
-  /** Force bad primary, then run fallback hop (demo failover). */
+  /** Force bad primary, then a second HTTP request (app hop — not provider failover). */
   failoverDemo?: boolean
   /** Artificial delay before the call (network simulator). */
   delayMs?: number
@@ -34,6 +45,31 @@ export interface ChatArgs {
     risk_tier?: string
     env?: string
   }
+  policy?: InferencePolicy
+  allowProviderFailover?: boolean
+}
+
+export interface GenerationLookup {
+  id: string | null
+  model: string | null
+  providerName: string | null
+  totalCost: number | null
+  finishReason: string | null
+  nativeFinishReason: string | null
+  isByok: boolean | null
+  tokensPrompt: number | null
+  tokensCompletion: number | null
+  latency: number | null
+  providerResponsesCount: number | null
+  error: string | null
+}
+
+export interface KeyStatus {
+  label: string | null
+  usage: number | null
+  limitRemaining: number | null
+  isFreeTier: boolean | null
+  error: string | null
 }
 
 async function sleep(ms: number) {
@@ -49,6 +85,24 @@ export function resolveInferenceMode(
 ): InferenceMode {
   if (requested === 'live' || requested === 'simulator') return requested
   return hasOpenRouterKey() ? 'live' : 'simulator'
+}
+
+function emptyChat(partial: Partial<ChatResult> & Pick<ChatResult, 'model' | 'hop'>): ChatResult {
+  return {
+    content: '',
+    requestId: null,
+    latencyMs: 0,
+    promptTokens: null,
+    completionTokens: null,
+    costUsd: null,
+    error: null,
+    requestedModels: [],
+    servedProvider: null,
+    inferenceUser: null,
+    allowProviderFailover: true,
+    inferencePolicy: null,
+    ...partial,
+  }
 }
 
 function simulateDecision(args: ChatArgs): ChatResult {
@@ -72,43 +126,92 @@ function simulateDecision(args: ChatArgs): ChatResult {
   }
 
   const authId = args.authId ?? 'anon'
-  return {
+  const requestedModels = args.policy?.requestedModels?.length
+    ? args.policy.requestedModels
+    : [args.model]
+  const allowProviderFailover =
+    args.allowProviderFailover ?? args.policy?.provider.allow_fallbacks ?? true
+  return emptyChat({
     content: JSON.stringify({ decision, reason }),
-    model: `simulator/${args.model}`,
+    model: `simulator/${requestedModels[0] ?? args.model}`,
     requestId: `sim_${authId}`,
     latencyMs: 12 + Math.floor(Math.random() * 40),
     promptTokens: 120,
     completionTokens: 40,
     costUsd: 0.00012,
     hop: 'simulator',
-    error: null,
-  }
+    requestedModels,
+    servedProvider: 'simulator',
+    inferenceUser: args.policy?.user ?? null,
+    allowProviderFailover,
+    inferencePolicy: args.policy?.id ?? null,
+  })
 }
 
-async function oneHop(
-  model: string,
-  messages: Array<{ role: string; content: string }>,
-  timeoutMs: number,
-  hop: string,
-): Promise<ChatResult> {
+interface CompletionBody {
+  id?: string
+  choices?: Array<{ message?: { content?: string } }>
+  usage?: {
+    prompt_tokens?: number
+    completion_tokens?: number
+    total_tokens?: number
+    cost?: number
+  }
+  error?: { message?: string }
+  model?: string
+  provider?: string
+}
+
+function providerObject(prefs: ProviderPrefs | undefined, allowFallbacks: boolean): Record<string, unknown> {
+  const provider: Record<string, unknown> = {
+    allow_fallbacks: allowFallbacks,
+  }
+  if (prefs?.sort) provider.sort = prefs.sort
+  if (prefs?.data_collection) provider.data_collection = prefs.data_collection
+  if (prefs?.max_price) provider.max_price = prefs.max_price
+  return provider
+}
+
+async function oneHop(opts: {
+  model: string
+  models?: string[]
+  messages: Array<{ role: string; content: string }>
+  timeoutMs: number
+  hop: string
+  user?: string
+  provider?: Record<string, unknown>
+  requestedModels: string[]
+  allowProviderFailover: boolean
+  inferencePolicy: string | null
+}): Promise<ChatResult> {
   const apiKey = process.env.OPENROUTER_API_KEY
   if (!apiKey) {
-    return {
-      content: '',
-      model,
-      requestId: null,
-      latencyMs: 0,
-      promptTokens: null,
-      completionTokens: null,
-      costUsd: null,
-      hop,
+    return emptyChat({
+      model: opts.model,
+      hop: opts.hop,
+      requestedModels: opts.requestedModels,
+      allowProviderFailover: opts.allowProviderFailover,
+      inferencePolicy: opts.inferencePolicy,
+      inferenceUser: opts.user ?? null,
       error: 'OPENROUTER_API_KEY missing. Set it in .env (server only).',
-    }
+    })
   }
 
   const started = Date.now()
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
+
+  const payload: Record<string, unknown> = {
+    model: opts.model,
+    messages: opts.messages,
+    temperature: 0,
+    response_format: { type: 'json_object' },
+    provider: opts.provider,
+  }
+  if (opts.models && opts.models.length > 1) {
+    payload.models = opts.models
+  }
+  if (opts.user) payload.user = opts.user
 
   try {
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -119,87 +222,83 @@ async function oneHop(
         'HTTP-Referer': 'https://github.com/bslevin2/mandate',
         'X-Title': 'Mandate',
       },
-      body: JSON.stringify({
-        model,
-        messages,
-        temperature: 0,
-        response_format: { type: 'json_object' },
-      }),
+      body: JSON.stringify(payload),
       signal: controller.signal,
     })
 
     const latencyMs = Date.now() - started
-    const requestId =
-      res.headers.get('x-request-id') ||
-      res.headers.get('x-openrouter-request-id') ||
-      null
-
-    const body = (await res.json()) as {
-      id?: string
-      choices?: Array<{ message?: { content?: string } }>
-      usage?: {
-        prompt_tokens?: number
-        completion_tokens?: number
-        total_tokens?: number
-        cost?: number
-      }
-      error?: { message?: string }
-      model?: string
-    }
+    const body = (await res.json()) as CompletionBody
+    const requestId = body.id || res.headers.get('x-request-id') || null
 
     if (!res.ok) {
-      return {
-        content: '',
-        model,
-        requestId: requestId || body.id || null,
+      return emptyChat({
+        model: opts.model,
+        hop: opts.hop,
+        requestId,
         latencyMs,
-        promptTokens: null,
-        completionTokens: null,
-        costUsd: null,
-        hop,
+        requestedModels: opts.requestedModels,
+        servedProvider: typeof body.provider === 'string' ? body.provider : null,
+        inferenceUser: opts.user ?? null,
+        allowProviderFailover: opts.allowProviderFailover,
+        inferencePolicy: opts.inferencePolicy,
         error: body.error?.message || `OpenRouter HTTP ${res.status}`,
-      }
+      })
     }
 
-    const content = body.choices?.[0]?.message?.content ?? ''
-    return {
-      content,
-      model: body.model || model,
-      requestId: requestId || body.id || null,
+    const served = body.model || opts.model
+    const hop = labelInferenceHop({
+      mode: 'live',
+      breakPipe: false,
+      appHop: opts.hop === 'app-hop',
+      allowProviderFailover: opts.allowProviderFailover,
+      requestedModels: opts.requestedModels,
+      servedModel: served,
+      error: null,
+    })
+
+    return emptyChat({
+      content: body.choices?.[0]?.message?.content ?? '',
+      model: served,
+      requestId,
       latencyMs,
       promptTokens: body.usage?.prompt_tokens ?? null,
       completionTokens: body.usage?.completion_tokens ?? null,
       costUsd: typeof body.usage?.cost === 'number' ? body.usage.cost : null,
       hop,
-      error: null,
-    }
+      requestedModels: opts.requestedModels,
+      servedProvider: typeof body.provider === 'string' ? body.provider : null,
+      inferenceUser: opts.user ?? null,
+      allowProviderFailover: opts.allowProviderFailover,
+      inferencePolicy: opts.inferencePolicy,
+    })
   } catch (err) {
     const latencyMs = Date.now() - started
     const message =
       err instanceof Error
         ? err.name === 'AbortError'
-          ? `OpenRouter timeout after ${timeoutMs}ms`
+          ? `OpenRouter timeout after ${opts.timeoutMs}ms`
           : err.message
         : String(err)
-    return {
-      content: '',
-      model,
-      requestId: null,
+    return emptyChat({
+      model: opts.model,
+      hop: opts.hop,
       latencyMs,
-      promptTokens: null,
-      completionTokens: null,
-      costUsd: null,
-      hop,
+      requestedModels: opts.requestedModels,
+      inferenceUser: opts.user ?? null,
+      allowProviderFailover: opts.allowProviderFailover,
+      inferencePolicy: opts.inferencePolicy,
       error: message,
-    }
+    })
   } finally {
     clearTimeout(timer)
   }
 }
 
 /**
- * Primary model, then fallback model, then fail-closed caller handles empty content.
- * Simulator mode returns deterministic JSON + fake request_id/cost (labeled hop).
+ * Live path sends `models[]` + `provider` prefs on a single request.
+ * Break = fail-closed (no models[], no second HTTP).
+ * App hop = Mandate's second HTTP after a broken primary — not provider failover.
+ * Simulator returns deterministic JSON + fake request_id/cost (labeled hop).
  */
 export async function chatWithFallback(args: ChatArgs): Promise<ChatResult> {
   if (args.delayMs && args.delayMs > 0) await sleep(args.delayMs)
@@ -207,79 +306,256 @@ export async function chatWithFallback(args: ChatArgs): Promise<ChatResult> {
   const mode = resolveInferenceMode(args.inferenceMode)
   const timeoutMs =
     args.timeoutMs ?? Number(process.env.OPENROUTER_TIMEOUT_MS || 8000)
-  const fallbackModel =
+  const policy = args.policy
+  const allowProviderFailover =
+    args.allowProviderFailover ?? policy?.provider.allow_fallbacks ?? true
+  const requestedModels =
+    policy?.requestedModels?.length ? policy.requestedModels : [args.model]
+  const appHopModel =
     args.fallbackModel ||
     process.env.OPENROUTER_FALLBACK_MODEL ||
-    process.env.OPENROUTER_MODEL ||
-    'openai/gpt-4o-mini'
+    requestedModels[1] ||
+    requestedModels[0] ||
+    args.model
+  const meta = {
+    requestedModels,
+    allowProviderFailover,
+    inferencePolicy: policy?.id ?? null,
+    inferenceUser: policy?.user ?? null,
+  }
 
-  // Simulator path — still honors break vs failover for demo clarity.
   if (mode === 'simulator') {
     if (args.breakPipe) {
-      return {
-        content: '',
+      return emptyChat({
         model: 'mandate/intentionally-invalid-model-id',
-        requestId: null,
+        hop: 'break',
         latencyMs: 8,
-        promptTokens: null,
-        completionTokens: null,
-        costUsd: null,
-        hop: 'primary-broken',
-        error:
-          'Simulator break: intentional invalid model — no fallback (fail-closed)',
-      }
+        error: 'Simulator break: intentional invalid model — no fallback (fail-closed)',
+        ...meta,
+      })
     }
     if (args.failoverDemo) {
-      const ok = simulateDecision({ ...args, model: fallbackModel })
+      const ok = simulateDecision({ ...args, model: appHopModel })
       return {
         ...ok,
-        hop: 'fallback-after:simulator-primary-invalid',
-        model: `simulator-fallback/${fallbackModel}`,
-        requestId: `sim_fb_${args.authId ?? 'anon'}`,
+        hop: 'app-hop',
+        model: `simulator-app-hop/${appHopModel}`,
+        requestId: `sim_ah_${args.authId ?? 'anon'}`,
+        ...meta,
       }
     }
     return simulateDecision(args)
   }
 
-  // Live OpenRouter
-  if (args.breakPipe && args.failoverDemo) {
-    // Prefer break when both set — mutual exclusion should be UI-enforced.
-  }
-
-  const forceBadPrimary = Boolean(args.breakPipe || args.failoverDemo)
-  const primaryModel = forceBadPrimary
-    ? 'mandate/intentionally-invalid-model-id'
-    : args.model
-
-  const primary = await oneHop(primaryModel, args.messages, timeoutMs, 'primary')
-  if (!primary.error && primary.content) return primary
+  const provider = providerObject(policy?.provider, allowProviderFailover)
 
   if (args.breakPipe) {
-    return { ...primary, hop: 'primary-broken' }
-  }
-
-  // failoverDemo or natural primary failure → try fallback
-  if (fallbackModel === primaryModel && !args.failoverDemo) {
-    return primary
-  }
-
-  const secondary = await oneHop(
-    fallbackModel,
-    args.messages,
-    timeoutMs,
-    'fallback',
-  )
-  if (!secondary.error && secondary.content) {
+    const broken = await oneHop({
+      model: 'mandate/intentionally-invalid-model-id',
+      messages: args.messages,
+      timeoutMs,
+      hop: 'break',
+      user: policy?.user,
+      provider: { allow_fallbacks: false },
+      requestedModels: ['mandate/intentionally-invalid-model-id'],
+      allowProviderFailover: false,
+      inferencePolicy: policy?.id ?? null,
+    })
     return {
-      ...secondary,
-      hop: `fallback-after:${primary.error || 'empty'}`,
+      ...broken,
+      hop: 'break',
+      inferenceUser: policy?.user ?? broken.inferenceUser,
+      inferencePolicy: policy?.id ?? null,
     }
   }
 
+  if (args.failoverDemo) {
+    const primary = await oneHop({
+      model: 'mandate/intentionally-invalid-model-id',
+      messages: args.messages,
+      timeoutMs,
+      hop: 'primary',
+      user: policy?.user,
+      provider: { allow_fallbacks: false },
+      requestedModels: ['mandate/intentionally-invalid-model-id'],
+      allowProviderFailover: false,
+      inferencePolicy: policy?.id ?? null,
+    })
+    const secondary = await oneHop({
+      model: appHopModel,
+      models: requestedModels,
+      messages: args.messages,
+      timeoutMs,
+      hop: 'app-hop',
+      user: policy?.user,
+      provider,
+      requestedModels,
+      allowProviderFailover,
+      inferencePolicy: policy?.id ?? null,
+    })
+    if (!secondary.error && secondary.content) {
+      return { ...secondary, hop: 'app-hop' }
+    }
+    return {
+      ...secondary,
+      hop: 'exhausted',
+      error:
+        secondary.error ||
+        primary.error ||
+        'App hop exhausted — fail-closed',
+    }
+  }
+
+  const primaryModel = requestedModels[0] || args.model
+  const primary = await oneHop({
+    model: primaryModel,
+    models: requestedModels,
+    messages: args.messages,
+    timeoutMs,
+    hop: 'primary',
+    user: policy?.user,
+    provider,
+    requestedModels,
+    allowProviderFailover,
+    inferencePolicy: policy?.id ?? null,
+  })
+  if (!primary.error && primary.content) return primary
+
   return {
-    ...secondary,
-    hop: 'exhausted',
-    error: secondary.error || primary.error || 'All OpenRouter hops failed',
+    ...primary,
+    hop: primary.error ? 'exhausted' : primary.hop,
+    error: primary.error || 'Empty completion — fail-closed',
+  }
+}
+
+export async function lookupGeneration(id: string): Promise<GenerationLookup> {
+  const apiKey = process.env.OPENROUTER_API_KEY?.trim()
+  const empty: GenerationLookup = {
+    id: id || null,
+    model: null,
+    providerName: null,
+    totalCost: null,
+    finishReason: null,
+    nativeFinishReason: null,
+    isByok: null,
+    tokensPrompt: null,
+    tokensCompletion: null,
+    latency: null,
+    providerResponsesCount: null,
+    error: null,
+  }
+  if (!apiKey) {
+    return { ...empty, error: 'OPENROUTER_API_KEY missing. Set it in .env (server only).' }
+  }
+  if (!id.trim()) {
+    return { ...empty, error: 'generation id required' }
+  }
+  if (id.startsWith('sim_')) {
+    return { ...empty, error: 'Simulator ids are local — look up only live generation ids' }
+  }
+
+  try {
+    const res = await fetch(
+      `https://openrouter.ai/api/v1/generation?id=${encodeURIComponent(id.trim())}`,
+      { headers: { Authorization: `Bearer ${apiKey}` } },
+    )
+    const body = (await res.json()) as {
+      data?: {
+        id?: string
+        model?: string
+        provider_name?: string | null
+        total_cost?: number | null
+        finish_reason?: string | null
+        native_finish_reason?: string | null
+        is_byok?: boolean | null
+        tokens_prompt?: number | null
+        tokens_completion?: number | null
+        latency?: number | null
+        provider_responses?: unknown[] | null
+      }
+      error?: { message?: string }
+    }
+    if (!res.ok) {
+      return {
+        ...empty,
+        error: body.error?.message || `Generation lookup HTTP ${res.status}`,
+      }
+    }
+    const data = body.data ?? {}
+    return {
+      id: data.id ?? id,
+      model: data.model ?? null,
+      providerName: data.provider_name ?? null,
+      totalCost: typeof data.total_cost === 'number' ? data.total_cost : null,
+      finishReason: data.finish_reason ?? null,
+      nativeFinishReason: data.native_finish_reason ?? null,
+      isByok: typeof data.is_byok === 'boolean' ? data.is_byok : null,
+      tokensPrompt: data.tokens_prompt ?? null,
+      tokensCompletion: data.tokens_completion ?? null,
+      latency: data.latency ?? null,
+      providerResponsesCount: Array.isArray(data.provider_responses)
+        ? data.provider_responses.length
+        : null,
+      error: null,
+    }
+  } catch (err) {
+    return {
+      ...empty,
+      error: err instanceof Error ? err.message : String(err),
+    }
+  }
+}
+
+export async function lookupKeyStatus(): Promise<KeyStatus> {
+  const apiKey = process.env.OPENROUTER_API_KEY?.trim()
+  if (!apiKey) {
+    return {
+      label: null,
+      usage: null,
+      limitRemaining: null,
+      isFreeTier: null,
+      error: 'OPENROUTER_API_KEY missing. Set it in .env (server only).',
+    }
+  }
+  try {
+    const res = await fetch('https://openrouter.ai/api/v1/key', {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    })
+    const body = (await res.json()) as {
+      data?: {
+        label?: string
+        usage?: number
+        limit_remaining?: number | null
+        is_free_tier?: boolean
+      }
+      error?: { message?: string }
+    }
+    if (!res.ok) {
+      return {
+        label: null,
+        usage: null,
+        limitRemaining: null,
+        isFreeTier: null,
+        error: body.error?.message || `Key status HTTP ${res.status}`,
+      }
+    }
+    const data = body.data ?? {}
+    return {
+      label: data.label ?? null,
+      usage: typeof data.usage === 'number' ? data.usage : null,
+      limitRemaining:
+        typeof data.limit_remaining === 'number' ? data.limit_remaining : null,
+      isFreeTier: typeof data.is_free_tier === 'boolean' ? data.is_free_tier : null,
+      error: null,
+    }
+  } catch (err) {
+    return {
+      label: null,
+      usage: null,
+      limitRemaining: null,
+      isFreeTier: null,
+      error: err instanceof Error ? err.message : String(err),
+    }
   }
 }
 
