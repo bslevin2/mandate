@@ -199,7 +199,7 @@ async function oneHop(opts: {
 
   const started = Date.now()
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs)
 
   const payload: Record<string, unknown> = {
     model: opts.model,
