@@ -1,21 +1,21 @@
 # Mandate
 
-Automated **agent-spend authorization** control plane. Inbound card-network-style auth requests (amount, MCC, merchant, agent) are **approved or declined** by a steered decisioner — not a human review queue.
+**Mandate** is an automated **agent-spend authorization** control plane.
 
-Use this console to:
+Autonomous agents initiate card-network-style spend (amount, MCC, merchant, agent id). Mandate **approves or declines** those authorizations at volume — not a human review queue. Ops steers who gets which policy, can kill the decisioner live, and keeps a tenant-scoped, tamper-evident audit of every decision.
 
-- Target **audiences** (env, risk, MCC, amount) that change policy **and** model route — with a visible **targeting reason**
-- **Kill** the decisioner live (fail-closed) without a deploy
-- Run inference through **OpenRouter** (Live) or a labeled **Simulator** (no key required)
-- Inspect **evidence** (AI config, prompt preview, model, cost, latency, request ID) and a **tenant-scoped audit feed**
-- Verify **trust**: tenant isolation on replay/authorize, and a **hash-chained** audit (`prevHash` → `rowHash`)
-- Show **experiment scoreboard**, **ops signals** (integrations), **break** vs **failover**
+## What you can do
+
+- **Audiences** — env, risk, MCC, and amount change which policy path runs (fast rules vs model) and which experiment treatment you are in, with a visible **targeting reason**
+- **Live kill** — freeze the decisioner without a deploy; the server fail-closes even if a client tries to bypass the UI
+- **Evidence** — decision config, prompt preview, model, cost, latency, request id for every model-path call
+- **Trust** — audit and replay scoped by tenant; hash-chained rows (`prevHash` → `rowHash`); cross-tenant replay denied
+- **Ops** — experiment scoreboard, in-app signals (optional webhook), break vs failover on the inference hop
 
 ## Quick start
 
 ```bash
 cp .env.example .env
-# optional: VITE_LD_CLIENT_ID, LD_SDK_KEY, OPENROUTER_API_KEY, OPS_WEBHOOK_URL
 npm install
 npm run dev
 ```
@@ -23,90 +23,32 @@ npm run dev
 - UI: http://localhost:5173  
 - API: http://localhost:8787  
 
-Without keys the app defaults to **local flag fallbacks** + **inference simulator**. Setup chips under the title show what is keyed vs simulated. Switch Inference to **Live** after setting `OPENROUTER_API_KEY` for real provider calls.
+No keys required. The console runs on **local policy fallbacks** and a labeled **inference simulator**. Setup chips under the title show what is live vs local.
 
-## Create LaunchDarkly flags
+## How the console works
 
-In your LD project, create:
+| Pane | Role |
+|------|------|
+| **Traffic** | Pick an audience (sandbox, prod, blocked MCC, QA dogfood), fire one auth or a burst, tamper, capture, refund |
+| **Decisioner** | Live / frozen state, route (fast vs model), treatment, SLO latency, experiment scoreboard |
+| **Evidence** | Last decision’s evidence; inference mode; remediate kill/restore; replay by request id; integrity break/restore; ops signals |
+| **Audit** | Tenant-scoped feed; click a row to load evidence |
 
-| Flag key | Type | Default | Notes |
-|----------|------|---------|-------|
-| `decisioner.live` | boolean | `true` | Release / remediate. Client SDK listens; when `false` the Decisioner pane freezes. Server also fail-closes. |
-| `decisioner.route` | string | `fast` or `model` | Targets the route/policy **component**. Rules by `env`, `risk_tier`, `mcc`, `amount_cents`. Individual target `email = qa@mandate.local` for QA dogfood. |
-| `decisioner.experiment` | string | `control` / `treatment` | Experiment treatments. Console scoreboard + `track` events `auth_approved`, `auth_declined`, `auth_latency_ms`, `auth_cost_usd`. |
-| `capture.live` | boolean | `true` | Optional — gates the irreversible capture path separately from authorize. |
-| `spend.cap.cents` | number | e.g. `25000` | Optional — over-cap fast-path decline (no model). |
+**Kill / remediate:** flip `decisioner.live` off in your flag dashboard (streams into the UI when a client-side ID is set), or click **Remediate kill** / `POST /api/remediate`. Both paths fail-closed without a page reload.
 
-**AI Config:** create config key `mandate-decisioner` (override with `LD_AI_CONFIG_KEY`). System prompt should ask for JSON:
-
-```json
-{"decision":"approve"|"decline","reason":"..."}
-```
-
-Optional shadow config: `{LD_AI_CONFIG_KEY}-shadow`.
-
-**Context attributes** used by the app: `key`, `email`, `env`, `risk_tier`, `tenant`, `mcc`, `amount_cents`.
-
-### Suggested targeting
-
-- **sandbox + low risk** → `decisioner.route = fast`
-- **prod + high risk** or **amount high** → `model`
-- **MCC 7995** → decline via fast-path
-- **email `qa@mandate.local`** → always `treatment` experiment variation
-
-## OpenRouter
-
-Set `OPENROUTER_API_KEY` (server only — never `VITE_*`).  
-Default model: `OPENROUTER_MODEL`. Fallback: `OPENROUTER_FALLBACK_MODEL`.
-
-**Inference modes (Evidence pane):**
-
-| Mode | Behavior |
-|------|----------|
-| **Simulator** (default if no key) | Deterministic JSON + `sim_*` request IDs + fake tokens/cost. Hop labeled `simulator`. |
-| **Live** | Real OpenRouter calls. Requires API key. |
-| **Break (no fallback)** | Invalid primary model; surface error; no fallback hop. |
-| **Failover demo** | Invalid primary, then fallback hop (`fallback-after:…`). |
-
-## Kill / remediate
-
-1. **Preferred with LD client ID:** turn `decisioner.live` **off** in the LaunchDarkly dashboard — Decisioner freezes without reload (streaming).
-2. **Always works (no reload):** click **Remediate kill** or:
-
-```bash
-curl -X POST http://localhost:8787/api/remediate -H "content-type: application/json" -d "{\"kill\":true}"
-```
-
-Setup chips explain which path you are on. Ops signals always log the event (`webhook: skipped` if no `OPS_WEBHOOK_URL`).
-
-## Tenants and audit integrity
-
-Audiences map to tenants (`acme`, `globex`, …). The audit feed, session spend, and replay are **scoped to the active tenant**.
-
-- Replay another tenant’s `request_id` → **403**
-- Authorize with an `authId` owned by another tenant → **decline** (fail closed)
-- Each audit row stores `prevHash` + `rowHash` (SHA-256 over canonical payload + previous tip)
-- Topbar badge `integrity · valid|broken`; Evidence pane can **Break integrity** (local demo) and **Restore chain**
-
-```bash
-curl http://localhost:8787/api/integrity
-```
-
-## Optional ops webhook
-
-Set `OPS_WEBHOOK_URL` (Slack incoming webhook or similar). Fired on remediate/kill and cost spikes. Even without it, **Ops signals** is always visible in-app.
+**Integrity:** each audit row is chained. **Break integrity** mutates a stored tip so the badge shows broken; **Restore chain** re-seals. Replay another tenant’s `request_id` returns 403.
 
 ## Architecture
 
 ```
-UI (Vite/React + LD client SDK)
+UI (ops console)
   → POST /api/authorize
-API (Express + LD server SDK + AI Configs)
-  → OpenRouter live OR labeled simulator
-  → tenant-scoped audit.json (hash chain) + ops signals
+API (policy evaluation + optional live model)
+  → approve | decline
+  → tenant-scoped audit (hash chain) + ops signals
 ```
 
-Three planes: **control** (flags), **inference** (OpenRouter / simulator), **trust** (tenant isolation + tamper-evident audit). Server evaluation is the control plane — the UI cannot approve traffic the server has killed.
+Three planes: **control** (who gets which policy / kill / experiment), **inference** (model path when routed there), **trust** (tenant isolation + tamper-evident audit). The server is authoritative — the UI cannot approve traffic the server has killed.
 
 ## Scripts
 
@@ -119,6 +61,65 @@ Three planes: **control** (flags), **inference** (OpenRouter / simulator), **tru
 
 ## Security notes
 
-- Keep `LD_SDK_KEY` and `OPENROUTER_API_KEY` in `.env` (gitignored).
+- Keep SDK and provider keys in `.env` (gitignored). Never put provider keys in `VITE_*`.
 - Demo `panDemo` fields are **redacted** before model calls; Evidence shows raw vs sent.
-- OpenRouter key never leaves the server; client only sees evidence + audit.
+- Provider keys never leave the server; the client only sees evidence and audit.
+
+---
+
+## Configuration (optional)
+
+Wire these when you want **live** flag evaluation and **live** model completions. Without them, local fallbacks and the simulator still exercise the full console.
+
+### Environment
+
+See [`.env.example`](.env.example):
+
+| Variable | Role |
+|----------|------|
+| `VITE_LD_CLIENT_ID` | Browser flag client — enables streaming kill when you flip flags in the dashboard |
+| `LD_SDK_KEY` | Server flag + decision-config evaluation |
+| `LD_AI_CONFIG_KEY` | Decision config key (default `mandate-decisioner`) |
+| `OPENROUTER_API_KEY` | Live inference (server only) |
+| `OPENROUTER_MODEL` / `OPENROUTER_FALLBACK_MODEL` | Primary and failover models |
+| `OPS_WEBHOOK_URL` | Optional Slack (or similar) webhook on kill / cost spikes |
+
+**LaunchDarkly** supplies live flags and decision configs. **OpenRouter** supplies live completions. Both are optional infrastructure for this product.
+
+### Feature flags
+
+Create these keys (types match the table):
+
+| Flag key | Type | Default | Product behavior |
+|----------|------|---------|------------------|
+| `decisioner.live` | boolean | `true` | Release / remediate. Client listens; when `false` the Decisioner freezes. Server fail-closes. |
+| `decisioner.route` | string | `fast` or `model` | Which policy path runs. Target by `env`, `risk_tier`, `mcc`, `amount_cents`. Individual: `email = qa@mandate.local`. |
+| `decisioner.experiment` | string | `control` / `treatment` | Experiment treatments; scoreboard + events `auth_approved`, `auth_declined`, `auth_latency_ms`, `auth_cost_usd`. |
+| `capture.live` | boolean | `true` | Optional — gates irreversible capture separately from authorize. |
+| `spend.cap.cents` | number | e.g. `25000` | Optional — over-cap fast-path decline (no model). |
+
+**Decision config** (AI Config product): key `mandate-decisioner`. System prompt should require JSON:
+
+```json
+{"decision":"approve"|"decline","reason":"..."}
+```
+
+Optional shadow: `{LD_AI_CONFIG_KEY}-shadow`.
+
+**Context attributes:** `key`, `email`, `env`, `risk_tier`, `tenant`, `mcc`, `amount_cents`.
+
+Suggested targeting:
+
+- sandbox + low risk → `decisioner.route = fast`
+- prod + high risk or high amount → `model`
+- MCC 7995 → decline on fast-path
+- `email = qa@mandate.local` → `treatment` experiment variation
+
+### Inference modes
+
+| Mode | Behavior |
+|------|----------|
+| **Simulator** (default without a provider key) | Deterministic JSON, `sim_*` request ids, labeled hop |
+| **Live** | Real provider calls (`OPENROUTER_API_KEY`) |
+| **Break (no fallback)** | Force primary failure; surface error |
+| **Failover** | Primary fails, then fallback hop (`fallback-after:…`) |

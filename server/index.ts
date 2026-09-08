@@ -94,8 +94,8 @@ app.get('/api/status', async (req, res) => {
     aiConfigSource: ai.source,
     promptPreview: ai.systemPrompt.slice(0, 280),
     streamingHint: process.env.VITE_LD_CLIENT_ID?.trim()
-      ? 'LD client: live streaming on decisioner.live'
-      : 'Remediate path (no reload) — add VITE_LD_CLIENT_ID for LD stream',
+      ? 'flags · streaming on decisioner.live'
+      : 'flags · remediate-only (set VITE_LD_CLIENT_ID for streaming)',
     tenant: context.tenant,
     integrityValid: integrity.valid,
     integrityBrokenAt: integrity.brokenAt,
@@ -172,7 +172,7 @@ app.post('/api/controls', (req, res) => {
 
 /**
  * Remediate trigger — flips local kill latch (fail-closed) and fires ops webhook.
- * Prefer flipping decisioner.live in the LaunchDarkly dashboard so the client SDK streams;
+ * Prefer flipping decisioner.live in the flag dashboard so the client streams;
  * this endpoint is the curl/browser path when the dashboard is unavailable.
  */
 app.post('/api/remediate', async (req, res) => {
@@ -186,8 +186,8 @@ app.post('/api/remediate', async (req, res) => {
     localKill: getLocalKill(),
     opsSignal: signal,
     hint: kill
-      ? 'Local kill ON — server fail-closes. Also toggle decisioner.live off in LD for client streaming.'
-      : 'Local kill OFF. Toggle decisioner.live on in LD to restore the UI decisioner.',
+      ? 'Local kill ON — server fail-closes. Also flip decisioner.live off in the flag dashboard for streaming UI.'
+      : 'Local kill OFF. Flip decisioner.live on in the flag dashboard to restore the UI decisioner.',
   })
 })
 

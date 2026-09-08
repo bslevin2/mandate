@@ -78,7 +78,7 @@ export function EvidencePane({
           >
             <option value="simulator">Simulator</option>
             <option value="live" disabled={!openRouterConfigured}>
-              Live OpenRouter{!openRouterConfigured ? ' (set key)' : ''}
+              Live{!openRouterConfigured ? ' (requires key)' : ''}
             </option>
           </select>
         </label>
@@ -185,7 +185,7 @@ export function EvidencePane({
             <dd>
               {evidence.route} · {evidence.treatment}
             </dd>
-            <dt>AI config</dt>
+            <dt>decision config</dt>
             <dd>
               {evidence.aiConfigKey ?? '—'}{' '}
               {evidence.aiConfigEnabled ? '(enabled)' : ''}

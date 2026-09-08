@@ -76,11 +76,11 @@ export interface DecideInput {
   audienceId: AudienceId
   context: LdContextAttrs
   auth: AuthRequest
-  /** Force a broken OpenRouter call for demo. */
+  /** Force a broken primary inference hop. */
   breakPipe?: boolean
   /** Skip model and attempt approve while decisioner may be killed (tamper). */
   tamper?: boolean
   phase?: 'authorize' | 'capture' | 'refund'
-  /** Run shadow AI config in parallel. */
+  /** Run shadow decision config in parallel. */
   shadow?: boolean
 }

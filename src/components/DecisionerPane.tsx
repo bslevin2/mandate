@@ -63,10 +63,10 @@ export function DecisionerPane({
         <div className="decisioner-box frozen">
           <strong>Decisioner killed</strong>
           <p className="muted">
-            Toggle <code>decisioner.live</code> off in LaunchDarkly (streaming)
-            or use <strong>Remediate kill</strong> (no reload either way). New
-            authorizations decline on the server even if a client tries to bypass
-            this UI.
+            Flip <code>decisioner.live</code> off in the flag dashboard
+            (streams when a client-side ID is set) or use{' '}
+            <strong>Remediate kill</strong>. New authorizations decline on the
+            server even if a client tries to bypass this UI.
           </p>
         </div>
       ) : (
@@ -83,9 +83,9 @@ export function DecisionerPane({
             <div>
               <strong>Route: model path</strong>
               <p className="muted">
-                AI Config supplies prompt + model; OpenRouter (or simulator)
-                executes. Structured JSON <code>approve|decline</code> required
-                or we fail closed.
+                Prompt + model come from the decision config; live provider or
+                simulator executes. Structured JSON{' '}
+                <code>approve|decline</code> required or we fail closed.
               </p>
             </div>
           )}
@@ -100,7 +100,7 @@ export function DecisionerPane({
       <h2 style={{ marginTop: '1rem' }}>Experiment scoreboard</h2>
       <p className="muted" style={{ marginTop: 0 }}>
         Local counts by <code>decisioner.experiment</code> treatment (also
-        tracked to LD when the server SDK is keyed).
+        tracked as metrics when policy evaluation is live).
       </p>
       <div className="feed" style={{ maxHeight: 140 }}>
         <table>

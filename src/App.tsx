@@ -460,29 +460,29 @@ function AppShell({
         >
           {status.streamingHint ??
             (ldClient
-              ? 'LD client: live streaming'
-              : 'Remediate path (no reload)')}
+              ? 'flags · streaming'
+              : 'flags · remediate-only')}
         </span>
         <span
           className={`badge ${status.ldSdkConfigured ? 'live' : 'warn'}`}
         >
-          LD server · {status.ldSdkConfigured ? 'keyed' : 'local-fallback'}
+          policy · {status.ldSdkConfigured ? 'live' : 'local'}
         </span>
         <span
           className={`badge ${status.openRouterConfigured ? 'live' : 'warn'}`}
         >
-          OpenRouter ·{' '}
-          {status.openRouterConfigured ? 'keyed' : 'simulator default'}
+          inference ·{' '}
+          {status.openRouterConfigured ? 'live ready' : 'simulator'}
         </span>
         <span
           className={`badge ${status.webhookConfigured ? 'live' : 'warn'}`}
         >
-          Webhook · {status.webhookConfigured ? 'configured' : 'in-app only'}
+          webhook · {status.webhookConfigured ? 'configured' : 'in-app only'}
         </span>
         <span
           className={`badge ${status.aiConfigEnabled ? 'live' : 'warn'}`}
         >
-          AI Config · {status.aiConfigKey ?? 'mandate-decisioner'}
+          decision config · {status.aiConfigKey ?? 'mandate-decisioner'}
         </span>
       </div>
 
