@@ -34,7 +34,7 @@ No keys required. The console runs on **local policy fallbacks** and a labeled *
 | **Evidence** | Last decision’s evidence; inference mode; remediate kill/restore; replay by request id; integrity break/restore; ops signals |
 | **Audit** | Tenant-scoped feed; click a row to load evidence |
 
-**Kill / remediate:** flip `decisioner.live` off in your flag dashboard (streams into the UI when a client-side ID is set), or click **Remediate kill** / `POST /api/remediate`. Both paths fail-closed without a page reload.
+**Kill / remediate:** flip `decisioner.live` off in LaunchDarkly (streams into the UI when a client-side ID is set), fire that flag’s **generic trigger** (turn targeting off), or click **Emergency stop** / `POST /api/remediate`. Dashboard and trigger are the same flag. Emergency stop is a local latch. All paths fail-closed without a page reload.
 
 **Integrity:** each audit row is chained. **Break integrity** mutates a stored tip so the badge shows broken; **Restore chain** re-seals. Replay another tenant’s `request_id` returns 403.
 
@@ -81,17 +81,17 @@ See [`.env.example`](.env.example):
 | `LD_SDK_KEY` | Server flag + decision-config evaluation |
 | `LD_AI_CONFIG_KEY` | Decision config key (default `mandate-decisioner`) |
 | `OPENROUTER_API_KEY` | Live inference (server only) |
-| `OPENROUTER_MODEL` | Last-resort default model id if a policy list is empty (`openai/gpt-4.1-nano`). Not prepended from LaunchDarkly. |
+| `OPENROUTER_MODEL` | Last-resort default model id if a policy list is empty (`openai/gpt-4.1-nano`). Not prepended from the decision config. |
 | `OPENROUTER_FALLBACK_MODEL` | Model for **Retry on backup** (Mandate’s second HTTP); default `google/gemini-2.5-flash-lite` |
 | `OPENROUTER_CHEAP_MODELS` | CSV for sandbox-low (`openai/gpt-4.1-nano,google/gemini-2.5-flash-lite`, sort by price) |
 | `OPENROUTER_STRONG_MODELS` | CSV for prod-high (`openai/gpt-4.1-nano,google/gemini-2.5-flash-lite`, sort by latency) |
 | `OPS_WEBHOOK_URL` | Optional Slack (or similar) webhook on kill / cost spikes |
 
-**LaunchDarkly** supplies flags, targeting, and the decision-config **prompt**. **Model lists** come from audience policy / `OPENROUTER_*_MODELS`. The completion provider only chooses among the ids Mandate sends.
+Create the flags and decision config below in **LaunchDarkly**. Model **lists** come from audience policy / `OPENROUTER_*_MODELS`. Live completions are optional OpenAI-compatible HTTP (`OPENROUTER_*`); without a key the console uses the simulator. The completion API only chooses among the ids Mandate sends.
 
 ### Feature flags
 
-Create these keys (types match the table):
+Create these keys in LaunchDarkly (types match the table):
 
 | Flag key | Type | Default | Product behavior |
 |----------|------|---------|------------------|
@@ -101,7 +101,7 @@ Create these keys (types match the table):
 | `capture.live` | boolean | `true` | Optional — gates irreversible capture separately from authorize. |
 | `spend.cap.cents` | number | e.g. `25000` | Optional — over-cap fast-path decline (no model). |
 
-**Decision config** (AI Config product): key `mandate-decisioner`. System prompt should require JSON:
+**Decision config** (LaunchDarkly AI Config): key `mandate-decisioner`. System prompt should require JSON:
 
 ```json
 {"decision":"approve"|"decline","reason":"..."}
@@ -114,9 +114,9 @@ The config’s model field is not used for routing. Optional shadow: `{LD_AI_CON
 Suggested targeting:
 
 - sandbox + low risk → `decisioner.route = fast`
-- prod + high risk or high amount → `model`
+- `env = prod` or high risk or high amount → `model`
 - MCC 7995 → decline on fast-path
-- `email = qa@mandate.local` → `treatment` experiment variation
+- individual: context key `qa-dogfood` → `decisioner.route = model` (does not match the sandbox+low rule)
 
 ### Inference modes
 
