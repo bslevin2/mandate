@@ -81,13 +81,13 @@ See [`.env.example`](.env.example):
 | `LD_SDK_KEY` | Server flag + decision-config evaluation |
 | `LD_AI_CONFIG_KEY` | Decision config key (default `mandate-decisioner`) |
 | `OPENROUTER_API_KEY` | Live inference (server only) |
-| `OPENROUTER_MODEL` | Default / decision-config primary |
-| `OPENROUTER_FALLBACK_MODEL` | Second model for **app hop** (a second HTTP request) |
-| `OPENROUTER_CHEAP_MODELS` | CSV for sandbox-low inference policy (`models[]`, sort by price) |
-| `OPENROUTER_STRONG_MODELS` | CSV for prod-high inference policy (`models[]`, sort by latency) |
+| `OPENROUTER_MODEL` | Last-resort default model id if a policy list is empty (`openai/gpt-4.1-nano`). Not prepended from LaunchDarkly. |
+| `OPENROUTER_FALLBACK_MODEL` | Model for **Retry on backup** (Mandate’s second HTTP); default `google/gemini-2.5-flash-lite` |
+| `OPENROUTER_CHEAP_MODELS` | CSV for sandbox-low (`openai/gpt-4.1-nano,google/gemini-2.5-flash-lite`, sort by price) |
+| `OPENROUTER_STRONG_MODELS` | CSV for prod-high (`openai/gpt-4.1-nano,google/gemini-2.5-flash-lite`, sort by latency) |
 | `OPS_WEBHOOK_URL` | Optional Slack (or similar) webhook on kill / cost spikes |
 
-**LaunchDarkly** supplies live flags and decision configs. **OpenRouter** supplies live completions. Both are optional infrastructure for this product.
+**LaunchDarkly** supplies flags, targeting, and the decision-config **prompt**. **Model lists** come from audience policy / `OPENROUTER_*_MODELS`. The completion provider only chooses among the ids Mandate sends.
 
 ### Feature flags
 
@@ -107,7 +107,7 @@ Create these keys (types match the table):
 {"decision":"approve"|"decline","reason":"..."}
 ```
 
-Optional shadow: `{LD_AI_CONFIG_KEY}-shadow`.
+The config’s model field is not used for routing. Optional shadow: `{LD_AI_CONFIG_KEY}-shadow`.
 
 **Context attributes:** `key`, `email`, `env`, `risk_tier`, `tenant`, `mcc`, `amount_cents`.
 
@@ -133,8 +133,29 @@ Audience → inference policy (when a model is called):
 
 | Audience | Policy | Routing |
 |----------|--------|---------|
-| sandbox-low, QA dogfood | cheap-price | `models[]` + sort price |
-| prod-high | strong-latency | `models[]` + sort latency + `data_collection=deny` |
+| sandbox-low, QA dogfood | cheap-price | `gpt-4.1-nano` → Gemini 2.5 Flash Lite, sort price |
+| prod-high | strong-latency | `gpt-4.1-nano` → Gemini 2.5 Flash Lite, sort latency + `data_collection=deny` |
 | blocked MCC | no-model | fast-path decline, no completion |
 
 Evidence shows requested models vs served model/provider, `usage.cost`, and request id. **Look up generation** calls `GET /api/v1/generation?id=` with the same inference key. **Key usage** calls `GET /api/v1/key` (never exposes the secret).
+
+**Retry on backup** is Mandate’s second HTTP, not same-call `models[]`. The first request uses an invalid model id; the second uses `OPENROUTER_FALLBACK_MODEL`. Success is hop `app-hop`. If the second call fails: hop `exhausted`, fail-closed.
+
+**Allow backup model on same call** only switches if the first id on that HTTP fails (outage). A healthy primary stays `primary`. To force it in the console: **Break** + **Allow backup** (Retry off) → one request to the other listed model, hop `model-fallback`. (An invalid model id cannot be used to trigger provider `models[]` — the API rejects the whole call.)
+
+### Attempt labels (next submit only)
+
+These are Mandate’s hop names in **Why this decision**, not provider jargon. Starting point unless noted: Advanced → Live AI, **Allow backup model** off, **Retry on backup** off, **Break** off, **Always use AI** off. Retry wins over Break (`app-hop`). Break + Allow backup (Retry off) is `model-fallback`.
+
+| Attempt | Console steps |
+|---|---|
+| `simulator` | Practice mode. Sandbox · low risk + **Always use AI** (sandbox is otherwise quick rules). |
+| `strict` | Live AI. Prod · high risk (or sandbox + Always use AI). Both backup boxes **off**. |
+| `primary` | Same as `strict`, but **Allow backup model on same call** **on**. The first listed model actually served the answer. |
+| `model-fallback` | **Break** + **Allow backup model** (Retry off). Primary is skipped; this request uses the other listed model. |
+| `app-hop` | **Retry on backup AI call** on. Mandate makes a second HTTP call. |
+| `break` | **Break the AI path** on, **Retry on backup** **off**. Fail-closed. |
+| `fast-path` | Sandbox · low risk, Always use AI **off**. Or profile **Blocked MCC**. |
+| `spend-cap` | Prod · high risk. Submit until amount is over the cap (local default $1000). |
+| `budget` | Session budget USD `0`, then a payment that would otherwise call AI. |
+| `tenant-isolation` | Replay a request id from **another** company. |

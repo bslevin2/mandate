@@ -1,261 +1,89 @@
 import type { Evidence } from '../types'
-
-export interface OpsSignal {
-  id: string
-  ts: string
-  event: string
-  webhookStatus: 'delivered' | 'skipped' | 'error'
-  payload: Record<string, unknown>
-}
+import { PanelHeader } from './PanelHeader'
+import { StatusChip } from './StatusChip'
 
 interface Props {
   evidence: Evidence | null
-  breakPipe: boolean
-  onBreakPipe: (v: boolean) => void
-  failoverDemo: boolean
-  onFailoverDemo: (v: boolean) => void
-  allowProviderFailover: boolean
-  onAllowProviderFailover: (v: boolean) => void
-  forceModelPath: boolean
-  onForceModelPath: (v: boolean) => void
-  inferenceMode: 'live' | 'simulator'
-  onInferenceMode: (m: 'live' | 'simulator') => void
-  networkDelayMs: number
-  onNetworkDelay: (ms: number) => void
-  sessionSpendUsd: number
-  budgetUsd: number | null
-  onBudget: (v: number | null) => void
-  replayId: string
-  onReplayId: (v: string) => void
-  onReplay: () => void
-  onRemediate: (kill: boolean) => void
-  opsSignals: OpsSignal[]
-  openRouterConfigured: boolean
-  integrityValid: boolean
-  tipHash: string | null
-  onBreakIntegrity: () => void
-  onRestoreIntegrity: () => void
-  tenant: string
-  inferencePolicy: string | null
-  onLookupGeneration: () => void
-  generationPending: boolean
-  onLookupKey: () => void
-  keyUsageLabel: string | null
+  evidenceSource: 'live' | 'history' | null
+  paymentId: string | null
 }
 
-export function EvidencePane({
-  evidence,
-  breakPipe,
-  onBreakPipe,
-  failoverDemo,
-  onFailoverDemo,
-  allowProviderFailover,
-  onAllowProviderFailover,
-  forceModelPath,
-  onForceModelPath,
-  inferenceMode,
-  onInferenceMode,
-  networkDelayMs,
-  onNetworkDelay,
-  sessionSpendUsd,
-  budgetUsd,
-  onBudget,
-  replayId,
-  onReplayId,
-  onReplay,
-  onRemediate,
-  opsSignals,
-  openRouterConfigured,
-  integrityValid,
-  tipHash,
-  onBreakIntegrity,
-  onRestoreIntegrity,
-  tenant,
-  inferencePolicy,
-  onLookupGeneration,
-  generationPending,
-  onLookupKey,
-  keyUsageLabel,
-}: Props) {
+export function EvidencePane({ evidence, evidenceSource, paymentId }: Props) {
   return (
     <section className="panel">
-      <h2>Evidence</h2>
-      {inferenceMode === 'simulator' && (
-        <p className="badge warn" style={{ display: 'inline-block' }}>
-          Simulated inference — not a live provider call
-        </p>
-      )}
+      <PanelHeader
+        title="Why this decision"
+        subheader="Rules applied to one payment you submitted or selected"
+        tip="Read-only. Submit a test payment above, or select a Decision history row. To change how the next payment is decided, use Configure & submit (including Advanced)."
+      />
       <div className="row">
-        <label className="field">
-          Inference
-          <select
-            value={inferenceMode}
-            onChange={(e) =>
-              onInferenceMode(e.target.value as 'live' | 'simulator')
-            }
-          >
-            <option value="simulator">Simulator</option>
-            <option value="live" disabled={!openRouterConfigured}>
-              Live{!openRouterConfigured ? ' (requires key)' : ''}
-            </option>
-          </select>
-        </label>
-        <label
-          className="field"
-          style={{ flexDirection: 'row', alignItems: 'center', gap: '0.4rem' }}
-        >
-          <input
-            type="checkbox"
-            checked={breakPipe}
-            onChange={(e) => onBreakPipe(e.target.checked)}
-          />
-          Break (fail-closed)
-        </label>
-        <label
-          className="field"
-          style={{ flexDirection: 'row', alignItems: 'center', gap: '0.4rem' }}
-        >
-          <input
-            type="checkbox"
-            checked={failoverDemo}
-            onChange={(e) => onFailoverDemo(e.target.checked)}
-          />
-          App hop (2nd request)
-        </label>
-        <label className="field">
-          Network delay (ms)
-          <input
-            type="number"
-            min={0}
-            max={5000}
-            value={networkDelayMs}
-            onChange={(e) => onNetworkDelay(Number(e.target.value) || 0)}
-          />
-        </label>
-        <label className="field">
-          Session budget USD
-          <input
-            type="number"
-            min={0}
-            step={0.01}
-            placeholder="unlimited"
-            value={budgetUsd ?? ''}
-            onChange={(e) =>
-              onBudget(e.target.value === '' ? null : Number(e.target.value))
-            }
-          />
-        </label>
-        <button className="danger" onClick={() => onRemediate(true)}>
-          Remediate kill
-        </button>
-        <button onClick={() => onRemediate(false)}>Restore</button>
-      </div>
-      <div className="row">
-        <label
-          className="field"
-          style={{ flexDirection: 'row', alignItems: 'center', gap: '0.4rem' }}
-        >
-          <input
-            type="checkbox"
-            checked={allowProviderFailover}
-            onChange={(e) => onAllowProviderFailover(e.target.checked)}
-          />
-          Allow provider failover
-        </label>
-        <label
-          className="field"
-          style={{ flexDirection: 'row', alignItems: 'center', gap: '0.4rem' }}
-        >
-          <input
-            type="checkbox"
-            checked={forceModelPath}
-            onChange={(e) => onForceModelPath(e.target.checked)}
-          />
-          Force model path
-        </label>
-        <span className="badge">
-          inference policy · {inferencePolicy ?? evidence?.inferencePolicy ?? '—'}
-        </span>
-      </div>
-      <p className="muted" style={{ marginTop: 0 }}>
-        App hop is a second HTTP call after a broken primary — not provider
-        failover. Provider failover is the per-request allow/deny on the same
-        call. Force model path skips fast-path so a cheap audience still hits
-        inference.
-      </p>
-      <div className="row">
-        <label className="field">
-          Replay by request ID
-          <input
-            value={replayId}
-            onChange={(e) => onReplayId(e.target.value)}
-            placeholder="req_… or sim_…"
-          />
-        </label>
-        <button onClick={onReplay}>Replay</button>
-        <button
-          disabled={generationPending || !evidence?.requestId}
-          onClick={onLookupGeneration}
-        >
-          Look up generation
-        </button>
-        <button onClick={onLookupKey}>Key usage</button>
-        <span className="badge warn">
-          session spend · ${sessionSpendUsd.toFixed(4)}
-        </span>
-        {keyUsageLabel && <span className="badge">{keyUsageLabel}</span>}
-      </div>
-
-      <h2 style={{ marginTop: '1rem' }}>Trust · isolation & integrity</h2>
-      <p className="muted" style={{ marginTop: 0 }}>
-        Audit and replay are scoped to tenant <code>{tenant}</code>. Each row
-        carries <code>prevHash</code> → <code>rowHash</code> (SHA-256). Cross-tenant
-        replay returns 403.
-      </p>
-      <div className="row">
-        <span
-          className={`badge ${integrityValid ? 'live' : 'frozen'}`}
-        >
-          chain · {integrityValid ? 'valid' : 'broken'}
-        </span>
-        {tipHash && (
-          <span className="badge mono">
-            tip · {tipHash.slice(0, 12)}…
-          </span>
+        {evidence && evidenceSource === 'live' && (
+          <StatusChip tone="live" tip="Loaded from the payment you just submitted.">
+            Just submitted
+          </StatusChip>
         )}
-        <button className="danger" onClick={onBreakIntegrity}>
-          Break integrity
-        </button>
-        <button onClick={onRestoreIntegrity}>Restore chain</button>
+        {evidence && evidenceSource === 'history' && (
+          <StatusChip tip="Loaded from a Decision history row.">
+            From history
+          </StatusChip>
+        )}
       </div>
 
+      <div className="panel-body">
       {!evidence ? (
-        <p className="muted">Fire an authorization to populate evidence.</p>
+        <p className="muted">
+          Submit a test payment, or select a row in Decision history, to see
+          the rules that were applied.
+        </p>
       ) : (
         <>
           <dl className="kv mono">
-            <dt>mode / hop</dt>
+            <dt title="Id for this spend attempt. Different from request id.">
+              payment id
+            </dt>
+            <dd>{paymentId ?? '—'}</dd>
+            <dt title="Id for the decision hop. Use this for replay and provider receipt — not the payment id.">
+              request id
+            </dt>
+            <dd>{evidence.requestId ?? '—'}</dd>
+            <dt title="Practice vs live AI, and which attempt served the answer. strict = backup model disallowed; model-fallback = same call used a later model in the list; app-hop = Retry on backup; unexpected-model = a different model served while backups were off.">
+              mode / attempt
+            </dt>
             <dd>
               {evidence.inferenceMode ?? '—'} · {evidence.hop ?? '—'}
             </dd>
-            <dt>inference policy</dt>
+            <dt title="Which model list / sort policy was selected">
+              decision policy
+            </dt>
             <dd>
               {evidence.inferencePolicy ?? '—'}
-              {evidence.forceModelPath ? ' · force model path' : ''}
+              {evidence.forceModelPath ? ' · always use AI' : ''}
             </dd>
-            <dt>requested models</dt>
+            <dt title="Models requested in preference order">
+              requested models
+            </dt>
             <dd>
               {evidence.requestedModels?.length
                 ? evidence.requestedModels.join(' → ')
                 : '—'}
             </dd>
-            <dt>served model</dt>
+            <dt title="Model that actually produced the decision">
+              served model
+            </dt>
             <dd>{evidence.model ?? '—'}</dd>
-            <dt>served provider</dt>
-            <dd>{evidence.servedProvider ?? evidence.generationLookup?.providerName ?? '—'}</dd>
-            <dt>actor (user)</dt>
+            <dt title="Upstream provider that served the answer">
+              served provider
+            </dt>
+            <dd>
+              {evidence.servedProvider ??
+                evidence.generationLookup?.providerName ??
+                '—'}
+            </dd>
+            <dt title="Actor attached to the AI call">actor</dt>
             <dd>{evidence.inferenceUser ?? '—'}</dd>
-            <dt>provider failover</dt>
+            <dt title="Whether a backup model was allowed on this request">
+              backup model
+            </dt>
             <dd>
               {evidence.allowProviderFailover == null
                 ? '—'
@@ -263,18 +91,26 @@ export function EvidencePane({
                   ? 'allow'
                   : 'strict'}
             </dd>
-            <dt>targeting</dt>
+            <dt title="Why this risk profile got this path / experiment group">
+              targeting
+            </dt>
             <dd>{evidence.targetingReason ?? '—'}</dd>
-            <dt>route / treatment</dt>
+            <dt title="Quick rules vs AI review, and experiment group">
+              path / experiment
+            </dt>
             <dd>
               {evidence.route} · {evidence.treatment}
             </dd>
-            <dt>decision config</dt>
+            <dt title="Decision config key used for prompt and model">
+              decision config
+            </dt>
             <dd>
               {evidence.aiConfigKey ?? '—'}{' '}
               {evidence.aiConfigEnabled ? '(enabled)' : ''}
             </dd>
-            <dt>prompt preview</dt>
+            <dt title="Short preview of the prompt sent to the model">
+              prompt preview
+            </dt>
             <dd>{evidence.promptPreview ?? '—'}</dd>
             <dt>latency</dt>
             <dd>
@@ -290,9 +126,9 @@ export function EvidencePane({
                 ? '—'
                 : `$${evidence.costUsd.toFixed(6)}`}
             </dd>
-            <dt>request_id</dt>
-            <dd>{evidence.requestId ?? '—'}</dd>
-            <dt>generation</dt>
+            <dt title="Provider receipt: cost, finish reason, attempts, errors">
+              provider receipt
+            </dt>
             <dd>
               {evidence.generationLookup
                 ? [
@@ -314,7 +150,9 @@ export function EvidencePane({
             <dd>{evidence.reason}</dd>
             <dt>error</dt>
             <dd>{evidence.error ?? '—'}</dd>
-            <dt>shadow</dt>
+            <dt title="Shadow decision vs live; DIFF means they disagreed">
+              shadow
+            </dt>
             <dd>
               {evidence.shadowDecision
                 ? `${evidence.shadowDecision} (${evidence.shadowModel})${
@@ -323,7 +161,11 @@ export function EvidencePane({
                 : '—'}
             </dd>
           </dl>
-          <p className="muted" style={{ marginTop: '0.6rem' }}>
+          <p
+            className="muted"
+            style={{ marginTop: '0.6rem' }}
+            title="Left: redacted context sent to the model. Right: raw context before redaction."
+          >
             Context sent to model (redacted) vs raw
           </p>
           <div className="row" style={{ alignItems: 'stretch' }}>
@@ -336,52 +178,6 @@ export function EvidencePane({
           </div>
         </>
       )}
-
-      <h2 style={{ marginTop: '1rem' }}>Ops signals (integrations)</h2>
-      <p className="muted" style={{ marginTop: 0 }}>
-        Always logged in-app. Webhook status: delivered / skipped (no URL) /
-        error.
-      </p>
-      <div className="feed" style={{ maxHeight: 120 }}>
-        <table>
-          <thead>
-            <tr>
-              <th>time</th>
-              <th>event</th>
-              <th>webhook</th>
-            </tr>
-          </thead>
-          <tbody>
-            {opsSignals.length === 0 && (
-              <tr>
-                <td colSpan={3} className="muted">
-                  No signals yet — Remediate kill to create one.
-                </td>
-              </tr>
-            )}
-            {opsSignals.slice(0, 10).map((s) => (
-              <tr key={s.id}>
-                <td className="mono">
-                  {new Date(s.ts).toLocaleTimeString()}
-                </td>
-                <td>{s.event}</td>
-                <td>
-                  <span
-                    className={`pill ${
-                      s.webhookStatus === 'delivered'
-                        ? 'approve'
-                        : s.webhookStatus === 'error'
-                          ? 'decline'
-                          : ''
-                    }`}
-                  >
-                    {s.webhookStatus}
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
       </div>
     </section>
   )

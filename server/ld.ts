@@ -102,7 +102,7 @@ export async function evaluateAiConfig(
     const defaultConfig = {
       enabled: true,
       model: {
-        name: process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini',
+        name: process.env.OPENROUTER_MODEL || 'openai/gpt-4.1-nano',
       },
       messages: [
         { role: 'system', content: DEFAULT_SYSTEM },
@@ -177,7 +177,7 @@ function localAiConfig(key: string, authSummary: string): AiConfigSnapshot {
   return {
     key,
     enabled: true,
-    model: process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini',
+    model: process.env.OPENROUTER_MODEL || 'openai/gpt-4.1-nano',
     systemPrompt: DEFAULT_SYSTEM,
     messages: [
       { role: 'system', content: DEFAULT_SYSTEM },

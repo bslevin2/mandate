@@ -1,5 +1,8 @@
 import {
+  appHopRequestedModels,
   labelInferenceHop,
+  sameCallBackupRequested,
+  sameCallBackupTarget,
   type InferencePolicy,
   type ProviderPrefs,
 } from './inference-policy.js'
@@ -26,7 +29,7 @@ export type InferenceMode = 'live' | 'simulator'
 export interface ChatArgs {
   model: string
   messages: Array<{ role: string; content: string }>
-  /** Force a bad model id; do NOT run app hop or models[] (surface error). */
+  /** Force a bad first model. Alone = fail-closed. With allow backup = same-call models[]. */
   breakPipe?: boolean
   /** Force bad primary, then a second HTTP request (app hop — not provider failover). */
   failoverDemo?: boolean
@@ -296,7 +299,8 @@ async function oneHop(opts: {
 
 /**
  * Live path sends `models[]` + `provider` prefs on a single request.
- * Break = fail-closed (no models[], no second HTTP).
+ * Break = fail-closed (no models[], no second HTTP) unless same-call backup is on.
+ * Break + allow backup = one HTTP to the next listed model (primary is skipped).
  * App hop = Mandate's second HTTP after a broken primary — not provider failover.
  * Simulator returns deterministic JSON + fake request_id/cost (labeled hop).
  */
@@ -317,6 +321,11 @@ export async function chatWithFallback(args: ChatArgs): Promise<ChatResult> {
     requestedModels[1] ||
     requestedModels[0] ||
     args.model
+  const hopRequested = appHopRequestedModels(
+    appHopModel,
+    requestedModels,
+    allowProviderFailover,
+  )
   const meta = {
     requestedModels,
     allowProviderFailover,
@@ -325,6 +334,30 @@ export async function chatWithFallback(args: ChatArgs): Promise<ChatResult> {
   }
 
   if (mode === 'simulator') {
+    if (args.failoverDemo) {
+      const ok = simulateDecision({ ...args, model: appHopModel })
+      return {
+        ...ok,
+        hop: 'app-hop',
+        model: `simulator-app-hop/${appHopModel}`,
+        requestId: `sim_ah_${args.authId ?? 'anon'}`,
+        ...meta,
+        requestedModels: hopRequested,
+      }
+    }
+    if (args.breakPipe && allowProviderFailover) {
+      const backup = sameCallBackupTarget(requestedModels)
+      if (backup && requestedModels[0]) {
+        const ok = simulateDecision({ ...args, model: backup })
+        return {
+          ...ok,
+          hop: 'model-fallback',
+          model: `simulator/${backup}`,
+          ...meta,
+          requestedModels: sameCallBackupRequested(requestedModels[0], backup),
+        }
+      }
+    }
     if (args.breakPipe) {
       return emptyChat({
         model: 'mandate/intentionally-invalid-model-id',
@@ -334,20 +367,72 @@ export async function chatWithFallback(args: ChatArgs): Promise<ChatResult> {
         ...meta,
       })
     }
-    if (args.failoverDemo) {
-      const ok = simulateDecision({ ...args, model: appHopModel })
-      return {
-        ...ok,
-        hop: 'app-hop',
-        model: `simulator-app-hop/${appHopModel}`,
-        requestId: `sim_ah_${args.authId ?? 'anon'}`,
-        ...meta,
-      }
-    }
     return simulateDecision(args)
   }
 
   const provider = providerObject(policy?.provider, allowProviderFailover)
+
+  if (args.failoverDemo) {
+    const primary = await oneHop({
+      model: 'mandate/intentionally-invalid-model-id',
+      messages: args.messages,
+      timeoutMs,
+      hop: 'primary',
+      user: policy?.user,
+      provider: { allow_fallbacks: false },
+      requestedModels: ['mandate/intentionally-invalid-model-id'],
+      allowProviderFailover: false,
+      inferencePolicy: policy?.id ?? null,
+    })
+    const secondary = await oneHop({
+      model: appHopModel,
+      models: hopRequested,
+      messages: args.messages,
+      timeoutMs,
+      hop: 'app-hop',
+      user: policy?.user,
+      provider,
+      requestedModels: hopRequested,
+      allowProviderFailover,
+      inferencePolicy: policy?.id ?? null,
+    })
+    if (!secondary.error && secondary.content) {
+      return { ...secondary, hop: 'app-hop' }
+    }
+    return {
+      ...secondary,
+      hop: 'exhausted',
+      error:
+        secondary.error ||
+        primary.error ||
+        'App hop exhausted — fail-closed',
+    }
+  }
+
+  if (args.breakPipe && allowProviderFailover) {
+    const backup = sameCallBackupTarget(requestedModels)
+    const primaryId = requestedModels[0]
+    if (backup && primaryId) {
+      const evidenceList = sameCallBackupRequested(primaryId, backup)
+      const fallbackHop = await oneHop({
+        model: backup,
+        messages: args.messages,
+        timeoutMs,
+        hop: 'primary',
+        user: policy?.user,
+        provider,
+        requestedModels: evidenceList,
+        allowProviderFailover: true,
+        inferencePolicy: policy?.id ?? null,
+      })
+      if (!fallbackHop.error && fallbackHop.content) return fallbackHop
+      return {
+        ...fallbackHop,
+        hop: fallbackHop.error ? 'exhausted' : fallbackHop.hop,
+        error: fallbackHop.error || 'Empty completion — fail-closed',
+      }
+    }
+  }
 
   if (args.breakPipe) {
     const broken = await oneHop({
@@ -366,43 +451,6 @@ export async function chatWithFallback(args: ChatArgs): Promise<ChatResult> {
       hop: 'break',
       inferenceUser: policy?.user ?? broken.inferenceUser,
       inferencePolicy: policy?.id ?? null,
-    }
-  }
-
-  if (args.failoverDemo) {
-    const primary = await oneHop({
-      model: 'mandate/intentionally-invalid-model-id',
-      messages: args.messages,
-      timeoutMs,
-      hop: 'primary',
-      user: policy?.user,
-      provider: { allow_fallbacks: false },
-      requestedModels: ['mandate/intentionally-invalid-model-id'],
-      allowProviderFailover: false,
-      inferencePolicy: policy?.id ?? null,
-    })
-    const secondary = await oneHop({
-      model: appHopModel,
-      models: requestedModels,
-      messages: args.messages,
-      timeoutMs,
-      hop: 'app-hop',
-      user: policy?.user,
-      provider,
-      requestedModels,
-      allowProviderFailover,
-      inferencePolicy: policy?.id ?? null,
-    })
-    if (!secondary.error && secondary.content) {
-      return { ...secondary, hop: 'app-hop' }
-    }
-    return {
-      ...secondary,
-      hop: 'exhausted',
-      error:
-        secondary.error ||
-        primary.error ||
-        'App hop exhausted — fail-closed',
     }
   }
 

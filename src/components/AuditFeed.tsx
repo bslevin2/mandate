@@ -1,4 +1,5 @@
 import type { AuditRow } from '../types'
+import { PanelHeader } from './PanelHeader'
 
 interface Props {
   rows: AuditRow[]
@@ -9,21 +10,35 @@ interface Props {
 export function AuditFeed({ rows, tenant, onSelect }: Props) {
   return (
     <section className="panel">
-      <h2>Audit feed · {tenant}</h2>
+      <PanelHeader
+        title={`Decision history · ${tenant}`}
+        subheader="Every decision for this company"
+        tip="Select a row to see the rules that were applied in Why this decision. Request id is the decision hop (replay / provider receipt). Payment id is the spend attempt — they are different."
+      />
       <p className="muted" style={{ marginTop: 0 }}>
-        Tenant-scoped. Hash chain tip updates on each decision.
+        Select a row to inspect applied rules. Request id is the decision hop;
+        it is not the payment id.
       </p>
-      <div className="feed">
-        <table>
+      <div className="panel-body">
+        <div className="feed">
+          <table>
           <thead>
             <tr>
               <th>time</th>
-              <th>phase</th>
+              <th title="Authorize, capture, refund, or related step">
+                phase
+              </th>
               <th>decision</th>
-              <th>audience</th>
-              <th>model / hop</th>
-              <th>request_id</th>
-              <th>hash</th>
+              <th>profile</th>
+              <th title="Model or attempt that served this decision">
+                model / attempt
+              </th>
+              <th title="Decision-hop id for replay and provider receipt — not the payment id">
+                request id
+              </th>
+              <th title="This row’s seal in the company ledger (not the latest seal)">
+                seal
+              </th>
               <th>reason</th>
             </tr>
           </thead>
@@ -31,7 +46,7 @@ export function AuditFeed({ rows, tenant, onSelect }: Props) {
             {rows.length === 0 && (
               <tr>
                 <td colSpan={8} className="muted">
-                  No decisions yet for this tenant.
+                  No decisions yet for this company.
                 </td>
               </tr>
             )}
@@ -40,6 +55,7 @@ export function AuditFeed({ rows, tenant, onSelect }: Props) {
                 key={r.id}
                 style={{ cursor: 'pointer' }}
                 onClick={() => onSelect(r)}
+                title="Load this decision into Why this decision"
               >
                 <td className="mono">{new Date(r.ts).toLocaleTimeString()}</td>
                 <td>{r.phase}</td>
@@ -59,6 +75,7 @@ export function AuditFeed({ rows, tenant, onSelect }: Props) {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
     </section>
   )

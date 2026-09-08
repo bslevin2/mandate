@@ -22,8 +22,8 @@ export interface InferencePolicy {
   skipModel: boolean
 }
 
-const DEFAULT_CHEAP = ['openai/gpt-4o-mini', 'google/gemini-2.0-flash-001']
-const DEFAULT_STRONG = ['google/gemini-2.5-flash', 'openai/gpt-4o-mini']
+const DEFAULT_CHEAP = ['openai/gpt-4.1-nano', 'google/gemini-2.5-flash-lite']
+const DEFAULT_STRONG = ['openai/gpt-4.1-nano', 'google/gemini-2.5-flash-lite']
 
 function csvEnv(name: string, fallback: string[]): string[] {
   const raw = process.env[name]?.trim()
@@ -31,16 +31,60 @@ function csvEnv(name: string, fallback: string[]): string[] {
   return raw.split(',').map((s) => s.trim()).filter(Boolean)
 }
 
+export function sameModel(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return false
+  const slug = (s: string) => {
+    const noVariant = s.toLowerCase().split(':')[0]!.trim()
+    const parts = noVariant.split('/')
+    return parts[parts.length - 1] || noVariant
+  }
+  return slug(a) === slug(b)
+}
+
 function uniqueModels(list: Array<string | null | undefined>): string[] {
-  const seen = new Set<string>()
   const out: string[] = []
   for (const item of list) {
     const id = item?.trim()
-    if (!id || seen.has(id)) continue
-    seen.add(id)
+    if (!id || out.some((existing) => sameModel(existing, id))) continue
     out.push(id)
   }
   return out
+}
+
+function requestedForPolicy(
+  preferred: string | null | undefined,
+  defaults: string[],
+  allowFailover: boolean,
+): string[] {
+  const all = uniqueModels([preferred, ...defaults])
+  if (!allowFailover) return all.slice(0, 1)
+  return all
+}
+
+/** Models recorded / sent on Mandate's second HTTP (retry on backup). */
+export function appHopRequestedModels(
+  appHopModel: string,
+  policyModels: string[],
+  allowProviderFailover: boolean,
+): string[] {
+  if (!allowProviderFailover) return [appHopModel]
+  return uniqueModels([appHopModel, ...policyModels])
+}
+
+/** Backup model to call when primary is broken on the same authorize. */
+export function sameCallBackupTarget(policyModels: string[]): string | null {
+  const primary = policyModels[0]
+  const backup = policyModels[1]
+  if (!primary || !backup || sameModel(backup, primary)) return null
+  return backup
+}
+
+/** Evidence list: intended primary first, then the model we actually send. */
+export function sameCallBackupRequested(
+  primary: string,
+  backup: string,
+): string[] {
+  return uniqueModels([primary, backup])
 }
 
 export function inferenceUser(
@@ -55,7 +99,7 @@ export function policyForAudience(
   context: LdContextAttrs,
   opts: {
     allowProviderFailover: boolean
-    /** Decision-config or env primary — prepended when present. */
+    /** Optional extra primary for tests. Live decide does not prepend a decision-config model. */
     preferredModel?: string | null
   },
 ): InferencePolicy {
@@ -77,7 +121,11 @@ export function policyForAudience(
   }
 
   if (audienceId === 'prod-high') {
-    const requestedModels = uniqueModels([opts.preferredModel, ...strong])
+    const requestedModels = requestedForPolicy(
+      opts.preferredModel,
+      strong,
+      opts.allowProviderFailover,
+    )
     return {
       id: 'strong-latency',
       requestedModels,
@@ -93,7 +141,11 @@ export function policyForAudience(
     }
   }
 
-  const requestedModels = uniqueModels([opts.preferredModel, ...cheap])
+  const requestedModels = requestedForPolicy(
+    opts.preferredModel,
+    cheap,
+    opts.allowProviderFailover,
+  )
   return {
     id: 'cheap-price',
     requestedModels,
@@ -104,12 +156,6 @@ export function policyForAudience(
     user,
     skipModel: false,
   }
-}
-
-export function sameModel(a: string | null | undefined, b: string | null | undefined): boolean {
-  if (!a || !b) return false
-  const norm = (s: string) => s.toLowerCase().split(':')[0]!.trim()
-  return norm(a) === norm(b)
 }
 
 /**
@@ -132,15 +178,22 @@ export function labelInferenceHop(opts: {
   if (opts.providerResponsesCount != null && opts.providerResponsesCount > 1) {
     return 'provider-failover'
   }
+  if (opts.error && !opts.servedModel) return 'exhausted'
+
   const first = opts.requestedModels[0]
-  if (
-    opts.servedModel &&
-    first &&
-    !sameModel(opts.servedModel, first)
-  ) {
+  const servedMatchesPrimary = Boolean(
+    opts.servedModel && first && sameModel(opts.servedModel, first),
+  )
+
+  if (!opts.allowProviderFailover) {
+    if (opts.servedModel && first && !servedMatchesPrimary) {
+      return 'unexpected-model'
+    }
+    return 'strict'
+  }
+
+  if (opts.servedModel && first && !servedMatchesPrimary) {
     return 'model-fallback'
   }
-  if (opts.error && !opts.servedModel) return 'exhausted'
-  if (!opts.allowProviderFailover) return 'strict'
   return 'primary'
 }

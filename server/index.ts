@@ -64,7 +64,7 @@ app.get('/api/status', async (req, res) => {
   const integrity = verifyChain()
   const inferencePolicy = policyForAudience(audienceId, context, {
     allowProviderFailover: controls.allowProviderFailover,
-    preferredModel: ai.source === 'launchdarkly' ? ai.model : null,
+    preferredModel: null,
   })
 
   res.json({
@@ -104,8 +104,8 @@ app.get('/api/status', async (req, res) => {
     aiConfigSource: ai.source,
     promptPreview: ai.systemPrompt.slice(0, 280),
     streamingHint: process.env.VITE_LD_CLIENT_ID?.trim()
-      ? 'flags · streaming on decisioner.live'
-      : 'flags · remediate-only (set VITE_LD_CLIENT_ID for streaming)',
+      ? 'Live flag stream · kill works from dashboard'
+      : 'No live flag stream · use Emergency stop only',
     tenant: context.tenant,
     integrityValid: integrity.valid,
     integrityBrokenAt: integrity.brokenAt,

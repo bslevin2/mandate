@@ -396,7 +396,7 @@ export async function decide(input: DecideInput): Promise<AuditRow> {
   const summary = authSummary(input)
   const ai = await evaluateAiConfig(input.context, summary)
   const model =
-    ai.model || process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini'
+    ai.model || process.env.OPENROUTER_MODEL || 'openai/gpt-4.1-nano'
   const messages = ai.messages.length
     ? ai.messages
     : [
@@ -409,7 +409,7 @@ export async function decide(input: DecideInput): Promise<AuditRow> {
 
   const policy = policyForAudience(input.audienceId, input.context, {
     allowProviderFailover: controls.allowProviderFailover,
-    preferredModel: ai.source === 'launchdarkly' ? ai.model : null,
+    preferredModel: null,
   })
 
   const chat = await chatWithFallback({

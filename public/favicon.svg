@@ -1,18 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" role="img" aria-label="Mandate">
-  <!-- Dark tile matching console --bg -->
-  <rect width="32" height="32" rx="8" fill="#0b0f14"/>
-  <rect x="1" y="1" width="30" height="30" rx="7" stroke="#273246" stroke-width="1"/>
-  <!-- Authorize stamp: ledger bar + M -->
+  <rect width="32" height="32" rx="8" fill="#fbf6ec"/>
+  <rect x="1" y="1" width="30" height="30" rx="7" stroke="#d4c4a8" stroke-width="1"/>
   <path
     d="M8 22.5V9.5L16 18.5L24 9.5V22.5"
-    stroke="#5b9dff"
+    stroke="#1a2740"
     stroke-width="2.25"
     stroke-linecap="round"
     stroke-linejoin="round"
   />
   <path
     d="M7 24.5H25"
-    stroke="#3dd68c"
+    stroke="#9a7b3c"
     stroke-width="1.75"
     stroke-linecap="round"
   />

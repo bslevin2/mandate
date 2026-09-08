@@ -1,4 +1,6 @@
 import type { RouteMode } from '../types'
+import { PanelHeader } from './PanelHeader'
+import { StatusChip } from './StatusChip'
 
 interface Props {
   live: boolean
@@ -7,19 +9,16 @@ interface Props {
   captureLive: boolean
   circuitOpen: boolean
   networkDelayMs: number
-  lastLatencyMs: number | null
-  targetingReason: string | null
+  preview: {
+    env: string
+    riskTier: string
+    mcc: string
+    amountCents: number
+  }
   flagSource: string | null
   inferencePolicy: string | null
   requestedModels: string[] | null
-  experiment: {
-    controlApprove: number
-    controlDecline: number
-    treatmentApprove: number
-    treatmentDecline: number
-  }
-  onBurstExperiment: () => void
-  pending: boolean
+  onRemediate: (kill: boolean) => void
 }
 
 export function DecisionerPane({
@@ -29,116 +28,120 @@ export function DecisionerPane({
   captureLive,
   circuitOpen,
   networkDelayMs,
-  lastLatencyMs,
-  targetingReason,
+  preview,
   flagSource,
   inferencePolicy,
   requestedModels,
-  experiment,
-  onBurstExperiment,
-  pending,
+  onRemediate,
 }: Props) {
-  const sloMs = 2000
-  const effectiveLatency = (lastLatencyMs ?? 0) + networkDelayMs
-  const sloOk = effectiveLatency <= sloMs
+  const pathLabel = route === 'fast' ? 'quick rules' : 'AI review'
+  const amount = `$${(preview.amountCents / 100).toFixed(2)}`
+  const profileLine = `Profile defaults: ${preview.env} · ${preview.riskTier} risk · MCC ${preview.mcc} · ${amount} → path ${pathLabel} · group ${treatment}`
 
   return (
     <section className="panel">
-      <h2>Decisioner</h2>
-      <div className="row">
-        <span className={`badge ${live ? 'live' : 'frozen'}`}>
-          {live ? 'LIVE' : 'FROZEN / FAIL-CLOSED'}
-        </span>
-        <span className="badge">treatment · {treatment}</span>
-        <span className={`badge ${captureLive ? 'live' : 'frozen'}`}>
-          capture · {captureLive ? 'on' : 'off'}
-        </span>
-        {flagSource && <span className="badge">flags · {flagSource}</span>}
-        {circuitOpen && <span className="badge frozen">circuit open</span>}
-      </div>
-
-      {targetingReason && (
-        <p className="mono muted" style={{ marginTop: 0 }}>
-          Targeting: {targetingReason}
-        </p>
-      )}
-      {inferencePolicy && (
-        <p className="mono muted" style={{ marginTop: 0 }}>
-          Inference policy: {inferencePolicy}
-          {requestedModels?.length ? ` · ${requestedModels.join(' → ')}` : ''}
-        </p>
-      )}
-
-      {!live ? (
-        <div className="decisioner-box frozen">
-          <strong>Decisioner killed</strong>
-          <p className="muted">
-            Flip <code>decisioner.live</code> off in the flag dashboard
-            (streams when a client-side ID is set) or use{' '}
-            <strong>Remediate kill</strong>. New authorizations decline on the
-            server even if a client tries to bypass this UI.
-          </p>
-        </div>
-      ) : (
-        <div className="decisioner-box">
-          {route === 'fast' ? (
-            <div>
-              <strong>Route: fast-path policy</strong>
-              <p className="muted">
-                Low-risk / under-cap traffic decides without a model call. Spend
-                caps and blocked MCC rules apply here.
-              </p>
-            </div>
-          ) : (
-            <div>
-              <strong>Route: model path</strong>
-              <p className="muted">
-                Prompt + model come from the decision config; live provider or
-                simulator executes. Structured JSON{' '}
-                <code>approve|decline</code> required or we fail closed.
-              </p>
-            </div>
-          )}
-          <div className={`slo ${sloOk ? 'ok' : 'bad'}`}>
-            Auth SLO ~{sloMs}ms · last effective latency{' '}
-            {lastLatencyMs == null ? '—' : `${effectiveLatency}ms`}
-            {networkDelayMs > 0 ? ` (incl. ${networkDelayMs}ms sim)` : ''}
-          </div>
-        </div>
-      )}
-
-      <h2 style={{ marginTop: '1rem' }}>Experiment scoreboard</h2>
-      <p className="muted" style={{ marginTop: 0 }}>
-        Local counts by <code>decisioner.experiment</code> treatment (also
-        tracked as metrics when policy evaluation is live).
+      <PanelHeader
+        title="Authorization engine"
+        subheader="Live status and what the next test payment will use"
+        tip="Status chips reflect live flags. Emergency stop/resume change engine state for all new spend. The preview is based on the selected risk profile — not a past payment."
+      />
+      <p className="when-updates">
+        Status updates when live flags change, when you stop/resume, or every
+        few seconds. Preview updates when you change risk profile.
       </p>
-      <div className="feed" style={{ maxHeight: 140 }}>
-        <table>
-          <thead>
-            <tr>
-              <th>treatment</th>
-              <th>approve</th>
-              <th>decline</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>control</td>
-              <td>{experiment.controlApprove}</td>
-              <td>{experiment.controlDecline}</td>
-            </tr>
-            <tr>
-              <td>treatment</td>
-              <td>{experiment.treatmentApprove}</td>
-              <td>{experiment.treatmentDecline}</td>
-            </tr>
-          </tbody>
-        </table>
+      <div className="row">
+        <StatusChip
+          tone={live ? 'live' : 'frozen'}
+          tip={
+            live
+              ? 'The engine is accepting spend authorizations.'
+              : 'Stopped — all new spend is declined. Use Resume approvals here, or flip the live flag in the dashboard.'
+          }
+        >
+          {live ? 'Accepting spend' : 'Stopped — all new spend declined'}
+        </StatusChip>
+        <StatusChip tip="Experiment group (control vs treatment) from the live flag.">
+          experiment group · {treatment}
+        </StatusChip>
+        <StatusChip
+          tone={captureLive ? 'live' : 'frozen'}
+          tip="When off, irreversible capture is blocked separately from authorize."
+        >
+          capture · {captureLive ? 'on' : 'off'}
+        </StatusChip>
+        {flagSource && (
+          <StatusChip tip="Where the current policy came from (live flags vs local fallback).">
+            flags · {flagSource}
+          </StatusChip>
+        )}
+        {circuitOpen && (
+          <StatusChip
+            tone="frozen"
+            tip="Safety breaker open — traffic is declined until conditions recover."
+          >
+            circuit open
+          </StatusChip>
+        )}
       </div>
-      <div className="row" style={{ marginTop: '0.5rem' }}>
-        <button disabled={pending} onClick={onBurstExperiment}>
-          Burst ×12 (experiment)
+      <div className="row">
+        <button className="danger" onClick={() => onRemediate(true)}>
+          Emergency stop
         </button>
+        <span
+          className={!live ? undefined : 'disabled-wrap'}
+          title={live ? 'Approvals are already running.' : undefined}
+        >
+          <button disabled={live} onClick={() => onRemediate(false)}>
+            Resume approvals
+          </button>
+        </span>
+      </div>
+
+      <div className="decisioner-box">
+        <strong>Next payment preview</strong>
+        <p className="muted" style={{ marginTop: '0.25rem' }}>
+          Based on the selected risk profile — not a specific past payment.
+          Submitted amounts vary within that profile’s typical range.
+        </p>
+        <p className="mono muted" style={{ marginTop: '0.5rem', marginBottom: 0 }}>
+          {profileLine}
+          {flagSource ? ` · source ${flagSource}` : ''}
+        </p>
+        <p className="mono muted" style={{ marginTop: '0.35rem', marginBottom: 0 }}>
+          Decision method:{' '}
+          {inferencePolicy
+            ? `${inferencePolicy}${
+                requestedModels?.length
+                  ? ` · ${requestedModels.join(' → ')}`
+                  : ''
+              }`
+            : '—'}
+        </p>
+        {!live ? (
+          <p className="muted" style={{ marginTop: '0.65rem', marginBottom: 0 }}>
+            Authorization is stopped. Use <strong>Resume approvals</strong> or
+            flip the live flag in the dashboard. New payments decline on the
+            server even if someone bypasses this screen.
+          </p>
+        ) : route === 'fast' ? (
+          <p className="muted" style={{ marginTop: '0.65rem', marginBottom: 0 }}>
+            <strong>Path: quick rules</strong> — lower-risk / under-cap traffic
+            decides without an AI call. Spend caps and blocked merchant
+            categories apply here.
+          </p>
+        ) : (
+          <p className="muted" style={{ marginTop: '0.65rem', marginBottom: 0 }}>
+            <strong>Path: AI review</strong> — prompt and model come from the
+            decision config; practice mode or live AI runs. Structured
+            approve/decline required or we decline by default.
+          </p>
+        )}
+        <div className="slo ok" style={{ marginTop: '0.5rem' }}>
+          Response target ~2000ms
+          {networkDelayMs > 0
+            ? ` · simulated delay ${networkDelayMs}ms will be added`
+            : ''}
+        </div>
       </div>
     </section>
   )
