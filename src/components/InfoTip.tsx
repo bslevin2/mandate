@@ -1,4 +1,10 @@
-import { useId } from 'react'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import { Button } from '@/components/ui/button'
+import { CircleHelp } from 'lucide-react'
 
 interface Props {
   /** Tooltip body shown on hover/focus */
@@ -7,22 +13,24 @@ interface Props {
   label?: string
 }
 
-/** Focus/hover info tip — no dependency, CSS-driven tooltip. */
+/** Focus/hover info tip via shadcn Tooltip. */
 export function InfoTip({ text, label = 'More information' }: Props) {
-  const id = useId()
   return (
-    <span className="info-tip">
-      <button
-        type="button"
-        className="info-tip-btn"
-        aria-label={label}
-        aria-describedby={id}
-      >
-        ?
-      </button>
-      <span id={id} role="tooltip" className="info-tip-bubble">
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          className="size-5 text-muted-foreground"
+          aria-label={label}
+        >
+          <CircleHelp className="size-3.5" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="max-w-xs text-pretty">
         {text}
-      </span>
-    </span>
+      </TooltipContent>
+    </Tooltip>
   )
 }

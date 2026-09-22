@@ -19,13 +19,16 @@ import {
   setControls,
 } from './decisioner.js'
 import {
-  evaluateAiConfig,
   evaluateFlags,
   getLocalKill,
   initLd,
   setLocalKill,
 } from './ld.js'
-import { hasOpenRouterKey, lookupGeneration, lookupKeyStatus, resolveInferenceMode } from './openrouter.js'
+import {
+  hasProviderKey,
+  resolveDecisionConfig,
+  resolveInferenceMode,
+} from './inference.js'
 import { policyForAudience } from './inference-policy.js'
 import { fireOpsWebhook, listOpsSignals } from './webhook.js'
 import type { AudienceId, AuthRequest, LdContextAttrs } from './types.js'
@@ -57,15 +60,9 @@ app.get('/api/status', async (req, res) => {
   const flags = await evaluateFlags(context)
   const controls = getControls()
   const inferenceMode = resolveInferenceMode(controls.inferenceMode)
-  const ai = await evaluateAiConfig(
-    context,
-    JSON.stringify({ probe: true, mcc: context.mcc }),
-  )
+  const ai = await resolveDecisionConfig(context)
   const integrity = verifyChain()
-  const inferencePolicy = policyForAudience(audienceId, context, {
-    allowProviderFailover: controls.allowProviderFailover,
-    preferredModel: null,
-  })
+  const pathPolicy = policyForAudience(audienceId, context)
 
   res.json({
     decisionerLive: flags.decisionerLive,
@@ -77,14 +74,11 @@ app.get('/api/status', async (req, res) => {
     sessionSpendUsd: sessionSpendUsd(context.tenant),
     auditCount: listAudit({ tenant: context.tenant }).length,
     breakPipe: controls.breakPipe,
-    failoverDemo: controls.failoverDemo,
     networkDelayMs: controls.networkDelayMs,
     budgetUsd: controls.budgetUsd,
-    allowProviderFailover: controls.allowProviderFailover,
     forceModelPath: controls.forceModelPath,
-    inferencePolicy: inferencePolicy.id,
-    requestedModels: inferencePolicy.requestedModels,
-    inferenceUser: inferencePolicy.user,
+    pathPolicy: pathPolicy.id,
+    inferenceUser: pathPolicy.user,
     flagSource: flags.source,
     spendCapCents: flags.spendCapCents,
     targetingReason: buildTargetingReason(
@@ -97,11 +91,13 @@ app.get('/api/status', async (req, res) => {
     inferenceMode,
     ldClientConfigured: Boolean(process.env.VITE_LD_CLIENT_ID?.trim()),
     ldSdkConfigured: Boolean(process.env.LD_SDK_KEY?.trim()),
-    openRouterConfigured: hasOpenRouterKey(),
+    providerConfigured: hasProviderKey(),
     webhookConfigured: Boolean(process.env.OPS_WEBHOOK_URL?.trim()),
     aiConfigKey: ai.key,
     aiConfigEnabled: ai.enabled,
     aiConfigSource: ai.source,
+    aiConfigModel: ai.model,
+    aiConfigProvider: ai.provider,
     promptPreview: ai.systemPrompt.slice(0, 280),
     streamingHint: process.env.VITE_LD_CLIENT_ID?.trim()
       ? 'Live flag stream · kill works from dashboard'
@@ -115,7 +111,8 @@ app.get('/api/status', async (req, res) => {
 })
 
 app.get('/api/audit', (req, res) => {
-  const tenant = typeof req.query.tenant === 'string' ? req.query.tenant : undefined
+  const tenant =
+    typeof req.query.tenant === 'string' ? req.query.tenant : undefined
   res.json(listAudit(tenant ? { tenant } : undefined))
 })
 
@@ -173,29 +170,16 @@ app.post('/api/controls', (req, res) => {
   const body = req.body ?? {}
   const patch: Parameters<typeof setControls>[0] = {}
   if ('breakPipe' in body) patch.breakPipe = Boolean(body.breakPipe)
-  if ('failoverDemo' in body) patch.failoverDemo = Boolean(body.failoverDemo)
   if ('inferenceMode' in body) patch.inferenceMode = body.inferenceMode
-  if ('networkDelayMs' in body) patch.networkDelayMs = Number(body.networkDelayMs) || 0
+  if ('networkDelayMs' in body)
+    patch.networkDelayMs = Number(body.networkDelayMs) || 0
   if ('budgetUsd' in body) {
     patch.budgetUsd = body.budgetUsd == null ? null : Number(body.budgetUsd)
   }
-  if ('allowProviderFailover' in body) {
-    patch.allowProviderFailover = Boolean(body.allowProviderFailover)
-  }
-  if ('forceModelPath' in body) patch.forceModelPath = Boolean(body.forceModelPath)
+  if ('forceModelPath' in body)
+    patch.forceModelPath = Boolean(body.forceModelPath)
   const next = setControls(patch)
   res.json(next)
-})
-
-app.get('/api/inference/generation', async (req, res) => {
-  const id = typeof req.query.id === 'string' ? req.query.id : ''
-  const data = await lookupGeneration(id)
-  res.status(data.error ? 400 : 200).json(data)
-})
-
-app.get('/api/inference/key', async (_req, res) => {
-  const data = await lookupKeyStatus()
-  res.status(data.error ? 400 : 200).json(data)
 })
 
 /**
@@ -225,7 +209,9 @@ app.post('/api/authorize', async (req, res) => {
     const context = req.body.context as LdContextAttrs
     const auth = req.body.auth as AuthRequest
     if (!audienceId || !context || !auth?.authId) {
-      res.status(400).json({ error: 'audienceId, context, and auth.authId required' })
+      res
+        .status(400)
+        .json({ error: 'audienceId, context, and auth.authId required' })
       return
     }
 

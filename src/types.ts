@@ -37,21 +37,6 @@ export interface Audience {
   context: LdContextAttrs
 }
 
-export interface GenerationLookup {
-  id: string | null
-  model: string | null
-  providerName: string | null
-  totalCost: number | null
-  finishReason: string | null
-  nativeFinishReason: string | null
-  isByok: boolean | null
-  tokensPrompt: number | null
-  tokensCompletion: number | null
-  latency: number | null
-  providerResponsesCount: number | null
-  error: string | null
-}
-
 export interface Evidence {
   decisionerLive: boolean
   route: RouteMode
@@ -79,13 +64,11 @@ export interface Evidence {
   targetingReason: string | null
   flagSource: 'launchdarkly' | 'local-fallback' | null
   inferenceMode: 'live' | 'simulator' | null
-  requestedModels: string[] | null
   servedProvider: string | null
-  inferencePolicy: string | null
-  allowProviderFailover: boolean | null
+  pathPolicy: string | null
   inferenceUser: string | null
-  generationLookup: GenerationLookup | null
   forceModelPath: boolean | null
+  judgeEvaluation: string | null
 }
 
 export interface AuditRow {
@@ -121,8 +104,7 @@ export interface StatusResponse {
   networkDelayMs: number
   integrityValid?: boolean
   integrityBrokenAt?: string | null
-  inferencePolicy?: string | null
-  requestedModels?: string[] | null
-  allowProviderFailover?: boolean
+  pathPolicy?: string | null
   forceModelPath?: boolean
+  providerConfigured?: boolean
 }

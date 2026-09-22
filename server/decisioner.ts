@@ -5,18 +5,15 @@ import {
   findByAuthIdAny,
   sessionSpendUsd,
 } from './audit.js'
+import { evaluateFlags, trackMetric } from './ld.js'
 import {
-  evaluateAiConfig,
-  evaluateFlags,
-  trackMetric,
-  DEFAULT_SYSTEM,
-} from './ld.js'
-import {
-  chatWithFallback,
-  hasOpenRouterKey,
+  completeDecision,
+  hasProviderKey,
+  resolveDecisionConfig,
   resolveInferenceMode,
+  DEFAULT_SYSTEM,
   type InferenceMode,
-} from './openrouter.js'
+} from './inference.js'
 import { policyForAudience } from './inference-policy.js'
 import { fireOpsWebhook } from './webhook.js'
 import type {
@@ -76,7 +73,9 @@ function authSummary(input: DecideInput): string {
   })
 }
 
-function parseDecision(content: string): { decision: Decision; reason: string } | null {
+function parseDecision(
+  content: string,
+): { decision: Decision; reason: string } | null {
   try {
     const jsonStart = content.indexOf('{')
     const jsonEnd = content.lastIndexOf('}')
@@ -142,40 +141,33 @@ function emptyEvidence(partial: Partial<Evidence>): Evidence {
     targetingReason: null,
     flagSource: null,
     inferenceMode: null,
-    requestedModels: null,
     servedProvider: null,
-    inferencePolicy: null,
-    allowProviderFailover: null,
+    pathPolicy: null,
     inferenceUser: null,
-    generationLookup: null,
     forceModelPath: null,
+    judgeEvaluation: null,
     ...partial,
   }
 }
 
 export interface RuntimeControls {
   breakPipe: boolean
-  failoverDemo: boolean
   inferenceMode: InferenceMode
   networkDelayMs: number
   budgetUsd: number | null
-  /** Per-request provider.allow_fallbacks. Default true. */
-  allowProviderFailover: boolean
-  /** Skip fast-path so sandbox-low still exercises the cheap model hop. */
+  /** Skip fast-path so sandbox-low still exercises the model hop. */
   forceModelPath: boolean
 }
 
 function defaultInferenceMode(): InferenceMode {
-  return hasOpenRouterKey() ? 'live' : 'simulator'
+  return hasProviderKey() ? 'live' : 'simulator'
 }
 
 let controls: RuntimeControls = {
   breakPipe: false,
-  failoverDemo: false,
   inferenceMode: defaultInferenceMode(),
   networkDelayMs: 0,
   budgetUsd: null,
-  allowProviderFailover: true,
   forceModelPath: false,
 }
 
@@ -191,9 +183,6 @@ export function setControls(patch: Partial<RuntimeControls>) {
       ;(next as RuntimeControls)[key] = value as never
     }
   }
-  // Mutual exclusion: break vs app hop
-  if (patch.breakPipe === true) next.failoverDemo = false
-  if (patch.failoverDemo === true) next.breakPipe = false
   if (patch.inferenceMode) {
     next.inferenceMode = resolveInferenceMode(patch.inferenceMode)
   }
@@ -205,7 +194,6 @@ export async function decide(input: DecideInput): Promise<AuditRow> {
   const phase = input.phase ?? 'authorize'
   const tenant = input.context.tenant
 
-  // Cross-tenant: same authId owned by another tenant → fail closed.
   const foreign = findByAuthIdAny(input.auth.authId)
   if (foreign && foreign.tenant !== tenant) {
     const evidence = emptyEvidence({
@@ -236,10 +224,7 @@ export async function decide(input: DecideInput): Promise<AuditRow> {
     flags.treatment,
     flags.source,
   )
-  const previewPolicy = policyForAudience(input.audienceId, input.context, {
-    allowProviderFailover: controls.allowProviderFailover,
-    preferredModel: null,
-  })
+  const pathPolicy = policyForAudience(input.audienceId, input.context)
   const rawContext = {
     ...input.context,
     merchant: input.auth.merchant,
@@ -255,10 +240,8 @@ export async function decide(input: DecideInput): Promise<AuditRow> {
     targetingReason,
     flagSource: flags.source as 'launchdarkly' | 'local-fallback',
     inferenceMode,
-    requestedModels: previewPolicy.requestedModels,
-    inferencePolicy: previewPolicy.id,
-    allowProviderFailover: controls.allowProviderFailover,
-    inferenceUser: previewPolicy.user,
+    pathPolicy: pathPolicy.id,
+    inferenceUser: pathPolicy.user,
     forceModelPath: controls.forceModelPath,
   }
 
@@ -358,10 +341,7 @@ export async function decide(input: DecideInput): Promise<AuditRow> {
   }
 
   const forceModel =
-    input.breakPipe ||
-    controls.breakPipe ||
-    controls.failoverDemo ||
-    controls.forceModelPath
+    input.breakPipe || controls.breakPipe || controls.forceModelPath
 
   if (flags.route === 'fast' && !forceModel) {
     const decision: Decision =
@@ -394,29 +374,15 @@ export async function decide(input: DecideInput): Promise<AuditRow> {
   }
 
   const summary = authSummary(input)
-  const ai = await evaluateAiConfig(input.context, summary)
-  const model =
-    ai.model || process.env.OPENROUTER_MODEL || 'openai/gpt-4.1-nano'
-  const messages = ai.messages.length
-    ? ai.messages
-    : [
-        { role: 'system', content: DEFAULT_SYSTEM },
-        { role: 'user', content: summary },
-      ]
-  const promptPreview =
-    messages.find((m) => m.role === 'system')?.content?.slice(0, 280) ??
-    ai.systemPrompt.slice(0, 280)
+  const configKey = process.env.LD_AI_CONFIG_KEY || 'mandate-decisioner'
+  const ai = await resolveDecisionConfig(input.context, configKey)
+  const promptPreview = (ai.systemPrompt || DEFAULT_SYSTEM).slice(0, 280)
 
-  const policy = policyForAudience(input.audienceId, input.context, {
-    allowProviderFailover: controls.allowProviderFailover,
-    preferredModel: null,
-  })
-
-  const chat = await chatWithFallback({
-    model: policy.requestedModels[0] || model,
-    messages,
+  const chat = await completeDecision({
+    configKey,
+    authSummary: summary,
+    context: input.context,
     breakPipe: input.breakPipe || controls.breakPipe,
-    failoverDemo: controls.failoverDemo,
     delayMs: controls.networkDelayMs,
     inferenceMode,
     authId: input.auth.authId,
@@ -426,8 +392,6 @@ export async function decide(input: DecideInput): Promise<AuditRow> {
       risk_tier: input.context.risk_tier,
       env: input.context.env,
     },
-    policy,
-    allowProviderFailover: controls.allowProviderFailover,
   })
 
   const parsed = chat.content ? parseDecision(chat.content) : null
@@ -450,14 +414,11 @@ export async function decide(input: DecideInput): Promise<AuditRow> {
   let shadowDiff: boolean | null = null
 
   if (input.shadow) {
-    const shadowAi = await evaluateAiConfig(
-      input.context,
-      summary,
-      `${process.env.LD_AI_CONFIG_KEY || 'mandate-decisioner'}-shadow`,
-    )
-    const shadowChat = await chatWithFallback({
-      model: shadowAi.model || process.env.OPENROUTER_FALLBACK_MODEL || model,
-      messages: shadowAi.messages,
+    const shadowKey = `${configKey}-shadow`
+    const shadowChat = await completeDecision({
+      configKey: shadowKey,
+      authSummary: summary,
+      context: input.context,
       delayMs: 0,
       inferenceMode,
       authId: `${input.auth.authId}_shadow`,
@@ -500,11 +461,8 @@ export async function decide(input: DecideInput): Promise<AuditRow> {
     shadowDiff,
     captureAllowed: flags.captureLive,
     circuitOpen: open,
-    requestedModels: chat.requestedModels,
     servedProvider: chat.servedProvider,
-    inferencePolicy: chat.inferencePolicy ?? previewPolicy.id,
-    allowProviderFailover: chat.allowProviderFailover,
-    inferenceUser: chat.inferenceUser,
+    judgeEvaluation: chat.judgeEvaluation,
     forceModelPath: controls.forceModelPath,
   })
 

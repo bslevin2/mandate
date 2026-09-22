@@ -13,6 +13,8 @@ import {
 } from './components/OpsSignalsPane'
 import { StatusChip } from './components/StatusChip'
 import { TrustPane } from './components/TrustPane'
+import { AppShell } from './components/layout/AppShell'
+import type { ConsoleView } from './components/layout/views'
 import type {
   AudienceId,
   AuditRow,
@@ -30,25 +32,24 @@ interface Status {
   sessionSpendUsd: number
   networkDelayMs: number
   breakPipe: boolean
-  failoverDemo?: boolean
   flagSource?: string
   targetingReason?: string
   inferenceMode?: 'live' | 'simulator'
   ldClientConfigured?: boolean
   ldSdkConfigured?: boolean
-  openRouterConfigured?: boolean
+  providerConfigured?: boolean
   webhookConfigured?: boolean
   streamingHint?: string
   aiConfigKey?: string
   aiConfigEnabled?: boolean
+  aiConfigModel?: string | null
+  aiConfigProvider?: string | null
   promptPreview?: string
   tenant?: string
   integrityValid?: boolean
   integrityBrokenAt?: string | null
   tipHash?: string | null
-  inferencePolicy?: string | null
-  requestedModels?: string[] | null
-  allowProviderFailover?: boolean
+  pathPolicy?: string | null
   forceModelPath?: boolean
 }
 
@@ -85,32 +86,31 @@ function emptyEvidence(
     targetingReason: null,
     flagSource: null,
     inferenceMode: null,
-    requestedModels: null,
     servedProvider: null,
-    inferencePolicy: null,
-    allowProviderFailover: null,
+    pathPolicy: null,
     inferenceUser: null,
-    generationLookup: null,
     forceModelPath: null,
+    judgeEvaluation: null,
     ...partial,
   }
 }
 
 export default function App({ ldEnabled = false }: { ldEnabled?: boolean }) {
   if (ldEnabled) return <AppWithLD />
-  return <AppShell ldClient={null} />
+  return <MandateConsole ldClient={null} />
 }
 
 function AppWithLD() {
   const ldClient = useLDClient()
-  return <AppShell ldClient={ldClient ?? null} />
+  return <MandateConsole ldClient={ldClient ?? null} />
 }
 
-function AppShell({
+function MandateConsole({
   ldClient,
 }: {
   ldClient: ReturnType<typeof useLDClient> | null
 }) {
+  const [view, setView] = useState<ConsoleView>('traffic')
   const [audienceId, setAudienceId] = useState<AudienceId>('sandbox-low')
   const audience = AUDIENCES[audienceId]
   const [tenant, setTenant] = useState<TenantId>('acme')
@@ -120,6 +120,7 @@ function AppShell({
   const [evidenceSource, setEvidenceSource] = useState<
     'live' | 'history' | null
   >(null)
+  const [selectedAuditId, setSelectedAuditId] = useState<string | null>(null)
   const [rows, setRows] = useState<AuditRow[]>([])
   const [opsSignals, setOpsSignals] = useState<OpsSignal[]>([])
   const [status, setStatus] = useState<Status>({
@@ -135,8 +136,6 @@ function AppShell({
     integrityValid: true,
   })
   const [breakPipe, setBreakPipe] = useState(false)
-  const [failoverDemo, setFailoverDemo] = useState(false)
-  const [allowProviderFailover, setAllowProviderFailover] = useState(true)
   const [forceModelPath, setForceModelPath] = useState(false)
   const [inferenceMode, setInferenceMode] = useState<'live' | 'simulator'>(
     'simulator',
@@ -145,8 +144,6 @@ function AppShell({
   const [budgetUsd, setBudgetUsd] = useState<number | null>(null)
   const [shadow, setShadow] = useState(false)
   const [replayId, setReplayId] = useState('')
-  const [generationPending, setGenerationPending] = useState(false)
-  const [keyUsageLabel, setKeyUsageLabel] = useState<string | null>(null)
   const [clientLive, setClientLive] = useState(true)
   const [clientRoute, setClientRoute] = useState<RouteMode | null>(null)
   const [ldReady, setLdReady] = useState(false)
@@ -230,10 +227,6 @@ function AppShell({
     setStatus(data)
     if (data.inferenceMode) setInferenceMode(data.inferenceMode)
     if (typeof data.breakPipe === 'boolean') setBreakPipe(data.breakPipe)
-    if (typeof data.failoverDemo === 'boolean')
-      setFailoverDemo(Boolean(data.failoverDemo))
-    if (typeof data.allowProviderFailover === 'boolean')
-      setAllowProviderFailover(data.allowProviderFailover)
     if (typeof data.forceModelPath === 'boolean')
       setForceModelPath(data.forceModelPath)
   }, [contextAttrs, audienceId])
@@ -267,6 +260,7 @@ function AppShell({
     setTenant(next)
     setEvidence(null)
     setEvidenceSource(null)
+    setSelectedAuditId(null)
     setLastAuth(null)
     setReplayId('')
   }
@@ -276,6 +270,7 @@ function AppShell({
     setAudienceId(id)
     setEvidence(null)
     setEvidenceSource(null)
+    setSelectedAuditId(null)
     setLastAuth(null)
     setReplayId('')
   }
@@ -283,11 +278,9 @@ function AppShell({
   const pushControls = useCallback(
     async (patch: {
       breakPipe?: boolean
-      failoverDemo?: boolean
       inferenceMode?: 'live' | 'simulator'
       networkDelayMs?: number
       budgetUsd?: number | null
-      allowProviderFailover?: boolean
       forceModelPath?: boolean
     }) => {
       await fetch('/api/controls', {
@@ -341,10 +334,12 @@ function AppShell({
         if (data.evidence) {
           setEvidence(data.evidence as Evidence)
           setEvidenceSource('live')
+          setSelectedAuditId(null)
         }
         if (data.audit) {
           const audit = data.audit as AuditRow
           setRows((prev) => [audit, ...prev.filter((r) => r.id !== audit.id)])
+          setSelectedAuditId(audit.id)
         }
         if (typeof data.sessionSpendUsd === 'number') {
           setStatus((s) => ({ ...s, sessionSpendUsd: data.sessionSpendUsd }))
@@ -446,6 +441,7 @@ function AppShell({
         }),
       )
       setEvidenceSource('history')
+      setView('decisions')
       return
     }
     if (!res.ok) {
@@ -462,12 +458,15 @@ function AppShell({
         }),
       )
       setEvidenceSource('history')
+      setView('decisions')
       return
     }
     const row = (await res.json()) as AuditRow
     setEvidence(row.evidence)
     setEvidenceSource('history')
+    setSelectedAuditId(row.id)
     setLastAuth(row.auth)
+    setView('decisions')
   }
 
   const onBreakIntegrity = async () => {
@@ -481,161 +480,86 @@ function AppShell({
     await refreshAudit()
   }
 
-  const onLookupGeneration = async () => {
-    const id = evidence?.requestId?.trim()
-    if (!id) return
-    setGenerationPending(true)
-    try {
-      const res = await fetch(
-        `/api/inference/generation?id=${encodeURIComponent(id)}`,
-      )
-      const data = await res.json()
-      setEvidence((prev) => {
-        if (!prev) return prev
-        const hop =
-          typeof data.providerResponsesCount === 'number' &&
-          data.providerResponsesCount > 1
-            ? 'provider-failover'
-            : prev.hop
-        return {
-          ...prev,
-          hop,
-          generationLookup: data,
-          servedProvider: prev.servedProvider ?? data.providerName ?? null,
-        }
-      })
-    } finally {
-      setGenerationPending(false)
-    }
-  }
+  const flagStreamConnected = Boolean(
+    ldClient && (ldReady || status.ldClientConfigured),
+  )
+  const engineLive =
+    clientLive && status.decisionerLive && !status.circuitOpen
 
-  const onLookupKey = async () => {
-    const res = await fetch('/api/inference/key')
-    const data = (await res.json()) as {
-      label?: string | null
-      usage?: number | null
-      limitRemaining?: number | null
-      error?: string | null
-    }
-    if (data.error) {
-      setKeyUsageLabel(data.error)
-      return
-    }
-    const usage =
-      typeof data.usage === 'number' ? `$${data.usage.toFixed(4)} used` : 'usage n/a'
-    const remaining =
-      typeof data.limitRemaining === 'number'
-        ? ` · ${data.limitRemaining.toFixed(4)} left`
-        : ''
-    setKeyUsageLabel(`${data.label ?? 'key'} · ${usage}${remaining}`)
-  }
+  const setupChips = [
+    {
+      label: flagStreamConnected
+        ? 'flag stream · live'
+        : 'flag stream · local',
+      tip: flagStreamConnected
+        ? 'Live flag stream connected. Flipping decisioner.live in the dashboard freezes the authorization engine without a reload.'
+        : 'No live flag stream — use Emergency stop only. Set VITE_LD_CLIENT_ID to enable streaming kill from the dashboard.',
+      tone: (flagStreamConnected ? 'live' : 'warn') as 'live' | 'warn',
+    },
+    {
+      label: `policy · ${status.ldSdkConfigured ? 'live' : 'local'}`,
+      tip: 'Server policy evaluation: live flags vs local fallbacks.',
+      tone: (status.ldSdkConfigured ? 'live' : 'warn') as 'live' | 'warn',
+    },
+    {
+      label: `AI · ${status.providerConfigured ? 'live ready' : 'practice only'}`,
+      tip: 'Provider key present for live AI vs practice mode only.',
+      tone: (status.providerConfigured ? 'live' : 'warn') as 'live' | 'warn',
+    },
+    {
+      label: `alerts · ${status.webhookConfigured ? 'webhook on' : 'in-app only'}`,
+      tip: 'Optional alert webhook for stop/cost signals; otherwise in-app only.',
+      tone: (status.webhookConfigured ? 'live' : 'warn') as 'live' | 'warn',
+    },
+    {
+      label: `config · ${status.aiConfigKey ?? 'mandate-decisioner'}`,
+      tip: 'Decision config key used for prompt and model selection.',
+      tone: (status.aiConfigEnabled ? 'live' : 'warn') as 'live' | 'warn',
+    },
+  ]
 
-  const flagStreamConnected = Boolean(ldClient && (ldReady || status.ldClientConfigured))
+  const statusSummary = (
+    <>
+      <StatusChip tip="Company scope for history, replay, and isolation checks.">
+        company · {contextAttrs.tenant}
+      </StatusChip>
+      <StatusChip
+        tone={status.integrityValid === false ? 'frozen' : 'live'}
+        tip="Whether this company’s sealed decision trail still checks out."
+      >
+        ledger · {status.integrityValid === false ? 'tampered' : 'intact'}
+      </StatusChip>
+      <StatusChip tip="Current path: quick rules vs AI review.">
+        path · {status.route === 'fast' ? 'quick rules' : 'AI review'}
+      </StatusChip>
+      <StatusChip tip="Experiment group from the live flag.">
+        experiment · {status.treatment}
+      </StatusChip>
+      <StatusChip
+        tone={inferenceMode === 'simulator' ? 'warn' : 'live'}
+        tip="Whether decisions use practice mode or live AI."
+      >
+        {inferenceMode === 'simulator' ? 'practice mode' : 'live AI'}
+      </StatusChip>
+      <StatusChip
+        tone="warn"
+        tip="Cumulative AI decision spend this browser session."
+      >
+        ${status.sessionSpendUsd.toFixed(4)} session
+      </StatusChip>
+    </>
+  )
 
   return (
-    <div className="app">
-      <header className="topbar">
-        <div>
-          <div className="brand">
-            <img
-              className="brand-mark"
-              src="/favicon.svg"
-              width={28}
-              height={28}
-              alt="Mandate"
-            />
-            <h1>Mandate</h1>
-          </div>
-          <p className="brand-blurb">
-            Approve or decline agent spend automatically, with a clear record
-            for each company.
-          </p>
-        </div>
-        <div className="badges">
-          <div className="badge-row">
-            <StatusChip tip="Company scope for history, replay, and isolation checks.">
-              company · {contextAttrs.tenant}
-            </StatusChip>
-            <StatusChip
-              tone={status.integrityValid === false ? 'frozen' : 'live'}
-              tip="Whether this company’s sealed decision trail still checks out."
-            >
-              ledger · {status.integrityValid === false ? 'tampered' : 'intact'}
-            </StatusChip>
-            <StatusChip
-              tone={status.decisionerLive ? 'live' : 'frozen'}
-              tip="Server stop state. When stopped, new spend is declined even if the UI is bypassed."
-            >
-              server {status.decisionerLive ? 'accepting' : 'stopped'}
-            </StatusChip>
-            <StatusChip tip="Current path: quick rules vs AI review.">
-              path · {status.route === 'fast' ? 'quick rules' : 'AI review'}
-            </StatusChip>
-            <StatusChip tip="Experiment group from the live flag.">
-              experiment · {status.treatment}
-            </StatusChip>
-            <StatusChip
-              tone={inferenceMode === 'simulator' ? 'warn' : 'live'}
-              tip="Whether decisions use practice mode or live AI."
-            >
-              {inferenceMode === 'simulator' ? 'practice mode' : 'live AI'}
-            </StatusChip>
-            <StatusChip
-              tone="warn"
-              tip="Cumulative AI decision spend this browser session."
-            >
-              ${status.sessionSpendUsd.toFixed(4)} session
-            </StatusChip>
-          </div>
-        </div>
-      </header>
-
-      <div className="setup-strip badges">
-        <p className="status-strip-label">
-          Setup — what’s wired (read-only)
-        </p>
-        <div className="badge-row">
-          <StatusChip
-            tone={flagStreamConnected ? 'live' : 'warn'}
-            tip={
-              flagStreamConnected
-                ? 'Live flag stream connected. Flipping decisioner.live in the dashboard freezes the authorization engine without a reload.'
-                : 'No live flag stream — use Emergency stop only. Set VITE_LD_CLIENT_ID to enable streaming kill from the dashboard.'
-            }
-          >
-            {flagStreamConnected
-              ? 'Live flag stream · kill works from dashboard'
-              : 'No live flag stream · use Emergency stop only'}
-          </StatusChip>
-          <StatusChip
-            tone={status.ldSdkConfigured ? 'live' : 'warn'}
-            tip="Server policy evaluation: live flags vs local fallbacks."
-          >
-            policy · {status.ldSdkConfigured ? 'live' : 'local'}
-          </StatusChip>
-          <StatusChip
-            tone={status.openRouterConfigured ? 'live' : 'warn'}
-            tip="Live AI key present vs practice mode only."
-          >
-            AI · {status.openRouterConfigured ? 'live ready' : 'practice only'}
-          </StatusChip>
-          <StatusChip
-            tone={status.webhookConfigured ? 'live' : 'warn'}
-            tip="Optional alert webhook for stop/cost signals; otherwise in-app only."
-          >
-            alerts · {status.webhookConfigured ? 'webhook on' : 'in-app only'}
-          </StatusChip>
-          <StatusChip
-            tone={status.aiConfigEnabled ? 'live' : 'warn'}
-            tip="Decision config key used for prompt and model selection."
-          >
-            decision config · {status.aiConfigKey ?? 'mandate-decisioner'}
-          </StatusChip>
-        </div>
-      </div>
-
-      <p className="zone-label">Before you submit</p>
-      <div className="grid pair">
+    <AppShell
+      activeView={view}
+      onViewChange={setView}
+      live={engineLive}
+      onRemediate={(kill) => void onRemediate(kill)}
+      setupChips={setupChips}
+      statusSummary={statusSummary}
+    >
+      {view === 'traffic' && (
         <ConfigurePane
           audienceId={audienceId}
           onAudienceChange={onAudienceChange}
@@ -654,19 +578,7 @@ function AppShell({
           breakPipe={breakPipe}
           onBreakPipe={(v) => {
             setBreakPipe(v)
-            if (v) setFailoverDemo(false)
-            void pushControls({ breakPipe: v, failoverDemo: false })
-          }}
-          failoverDemo={failoverDemo}
-          onFailoverDemo={(v) => {
-            setFailoverDemo(v)
-            if (v) setBreakPipe(false)
-            void pushControls({ failoverDemo: v, breakPipe: false })
-          }}
-          allowProviderFailover={allowProviderFailover}
-          onAllowProviderFailover={(v) => {
-            setAllowProviderFailover(v)
-            void pushControls({ allowProviderFailover: v })
+            void pushControls({ breakPipe: v })
           }}
           forceModelPath={forceModelPath}
           onForceModelPath={(v) => {
@@ -691,15 +603,13 @@ function AppShell({
           replayId={replayId}
           onReplayId={setReplayId}
           onReplay={() => void onReplay()}
-          openRouterConfigured={Boolean(status.openRouterConfigured)}
-          onLookupGeneration={() => void onLookupGeneration()}
-          generationPending={generationPending}
-          onLookupKey={() => void onLookupKey()}
-          keyUsageLabel={keyUsageLabel}
-          hasRequestId={Boolean(evidence?.requestId)}
+          providerConfigured={Boolean(status.providerConfigured)}
         />
+      )}
+
+      {view === 'engine' && (
         <DecisionerPane
-          live={clientLive && status.decisionerLive && !status.circuitOpen}
+          live={engineLive}
           route={clientRoute ?? status.route}
           treatment={status.treatment}
           captureLive={status.captureLive}
@@ -712,37 +622,47 @@ function AppShell({
             amountCents: contextAttrs.amount_cents,
           }}
           flagSource={status.flagSource ?? null}
-          inferencePolicy={status.inferencePolicy ?? null}
-          requestedModels={status.requestedModels ?? null}
+          pathPolicy={status.pathPolicy ?? null}
+          decisionConfigLabel={
+            status.aiConfigModel
+              ? `${status.aiConfigProvider ?? 'config'} · ${status.aiConfigModel}`
+              : (status.aiConfigKey ?? null)
+          }
           onRemediate={(kill) => void onRemediate(kill)}
         />
-      </div>
+      )}
 
-      <p className="zone-label">After decisions</p>
-      <div className={evidence ? 'grid pair filled' : 'grid'}>
-        <AuditFeed
-          rows={rows}
-          tenant={contextAttrs.tenant}
-          onSelect={(row) => {
-            setEvidence(row.evidence)
-            setEvidenceSource('history')
-            setLastAuth(row.auth)
-            if (row.evidence.requestId) setReplayId(row.evidence.requestId)
-          }}
-        />
-        <EvidencePane
-          evidence={evidence}
-          evidenceSource={evidenceSource}
-          paymentId={lastAuth?.authId ?? null}
-        />
-      </div>
+      {view === 'decisions' && (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <AuditFeed
+            rows={rows}
+            tenant={contextAttrs.tenant}
+            selectedId={selectedAuditId}
+            onSelect={(row) => {
+              setEvidence(row.evidence)
+              setEvidenceSource('history')
+              setSelectedAuditId(row.id)
+              setLastAuth(row.auth)
+              if (row.evidence.requestId) setReplayId(row.evidence.requestId)
+            }}
+          />
+          <EvidencePane
+            evidence={evidence}
+            evidenceSource={evidenceSource}
+            paymentId={lastAuth?.authId ?? null}
+          />
+        </div>
+      )}
 
-      <div className="grid pair">
+      {view === 'experiments' && (
         <ExperimentPane
           experiment={experiment}
           pending={pending}
           onBurstExperiment={() => void burst(12)}
         />
+      )}
+
+      {view === 'trust' && (
         <TrustPane
           tenant={contextAttrs.tenant}
           integrityValid={status.integrityValid !== false}
@@ -750,11 +670,9 @@ function AppShell({
           onBreakIntegrity={() => void onBreakIntegrity()}
           onRestoreIntegrity={() => void onRestoreIntegrity()}
         />
-      </div>
+      )}
 
-      <div className="grid full">
-        <OpsSignalsPane opsSignals={opsSignals} />
-      </div>
-    </div>
+      {view === 'signals' && <OpsSignalsPane opsSignals={opsSignals} />}
+    </AppShell>
   )
 }

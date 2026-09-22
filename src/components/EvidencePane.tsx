@@ -1,6 +1,7 @@
-import type { Evidence } from '../types'
+import type { Evidence } from '@/types'
 import { PanelHeader } from './PanelHeader'
 import { StatusChip } from './StatusChip'
+import { Card, CardContent } from '@/components/ui/card'
 
 interface Props {
   evidence: Evidence | null
@@ -8,177 +9,173 @@ interface Props {
   paymentId: string | null
 }
 
+function Kv({
+  label,
+  title,
+  value,
+}: {
+  label: string
+  title?: string
+  value: string
+}) {
+  return (
+    <>
+      <dt className="text-muted-foreground" title={title}>
+        {label}
+      </dt>
+      <dd className="break-all">{value}</dd>
+    </>
+  )
+}
+
 export function EvidencePane({ evidence, evidenceSource, paymentId }: Props) {
   return (
-    <section className="panel">
-      <PanelHeader
-        title="Why this decision"
-        subheader="Rules applied to one payment you submitted or selected"
-        tip="Read-only. Submit a test payment above, or select a Decision history row. To change how the next payment is decided, use Configure & submit (including Advanced)."
-      />
-      <div className="row">
-        {evidence && evidenceSource === 'live' && (
-          <StatusChip tone="live" tip="Loaded from the payment you just submitted.">
-            Just submitted
-          </StatusChip>
-        )}
-        {evidence && evidenceSource === 'history' && (
-          <StatusChip tip="Loaded from a Decision history row.">
-            From history
-          </StatusChip>
-        )}
-      </div>
+    <Card className="min-w-0">
+      <CardContent className="space-y-4 pt-6">
+        <PanelHeader
+          title="Why this decision"
+          subheader="Rules applied to one payment you submitted or selected"
+          tip="Read-only. Submit a test payment in Traffic, or select a Decision history row. To change how the next payment is decided, use Traffic (including Advanced)."
+        />
+        <div className="flex flex-wrap gap-2">
+          {evidence && evidenceSource === 'live' && (
+            <StatusChip
+              tone="live"
+              tip="Loaded from the payment you just submitted."
+            >
+              Just submitted
+            </StatusChip>
+          )}
+          {evidence && evidenceSource === 'history' && (
+            <StatusChip tip="Loaded from a Decision history row.">
+              From history
+            </StatusChip>
+          )}
+        </div>
 
-      <div className="panel-body">
-      {!evidence ? (
-        <p className="muted">
-          Submit a test payment, or select a row in Decision history, to see
-          the rules that were applied.
-        </p>
-      ) : (
-        <>
-          <dl className="kv mono">
-            <dt title="Id for this spend attempt. Different from request id.">
-              payment id
-            </dt>
-            <dd>{paymentId ?? '—'}</dd>
-            <dt title="Id for the decision hop. Use this for replay and provider receipt — not the payment id.">
-              request id
-            </dt>
-            <dd>{evidence.requestId ?? '—'}</dd>
-            <dt title="Practice vs live AI, and which attempt served the answer. strict = backup model disallowed; model-fallback = same call used a later model in the list; app-hop = Retry on backup; unexpected-model = a different model served while backups were off.">
-              mode / attempt
-            </dt>
-            <dd>
-              {evidence.inferenceMode ?? '—'} · {evidence.hop ?? '—'}
-            </dd>
-            <dt title="Which model list / sort policy was selected">
-              decision policy
-            </dt>
-            <dd>
-              {evidence.inferencePolicy ?? '—'}
-              {evidence.forceModelPath ? ' · always use AI' : ''}
-            </dd>
-            <dt title="Models requested in preference order">
-              requested models
-            </dt>
-            <dd>
-              {evidence.requestedModels?.length
-                ? evidence.requestedModels.join(' → ')
-                : '—'}
-            </dd>
-            <dt title="Model that actually produced the decision">
-              served model
-            </dt>
-            <dd>{evidence.model ?? '—'}</dd>
-            <dt title="Upstream provider that served the answer">
-              served provider
-            </dt>
-            <dd>
-              {evidence.servedProvider ??
-                evidence.generationLookup?.providerName ??
-                '—'}
-            </dd>
-            <dt title="Actor attached to the AI call">actor</dt>
-            <dd>{evidence.inferenceUser ?? '—'}</dd>
-            <dt title="Whether a backup model was allowed on this request">
-              backup model
-            </dt>
-            <dd>
-              {evidence.allowProviderFailover == null
-                ? '—'
-                : evidence.allowProviderFailover
-                  ? 'allow'
-                  : 'strict'}
-            </dd>
-            <dt title="Why this risk profile got this path / experiment group">
-              targeting
-            </dt>
-            <dd>{evidence.targetingReason ?? '—'}</dd>
-            <dt title="Quick rules vs AI review, and experiment group">
-              path / experiment
-            </dt>
-            <dd>
-              {evidence.route} · {evidence.treatment}
-            </dd>
-            <dt title="Decision config key used for prompt and model">
-              decision config
-            </dt>
-            <dd>
-              {evidence.aiConfigKey ?? '—'}{' '}
-              {evidence.aiConfigEnabled ? '(enabled)' : ''}
-            </dd>
-            <dt title="Short preview of the prompt sent to the model">
-              prompt preview
-            </dt>
-            <dd>{evidence.promptPreview ?? '—'}</dd>
-            <dt>latency</dt>
-            <dd>
-              {evidence.latencyMs == null ? '—' : `${evidence.latencyMs}ms`}
-            </dd>
-            <dt>tokens</dt>
-            <dd>
-              {evidence.promptTokens ?? '—'} / {evidence.completionTokens ?? '—'}
-            </dd>
-            <dt>cost</dt>
-            <dd>
-              {evidence.costUsd == null
-                ? '—'
-                : `$${evidence.costUsd.toFixed(6)}`}
-            </dd>
-            <dt title="Provider receipt: cost, finish reason, attempts, errors">
-              provider receipt
-            </dt>
-            <dd>
-              {evidence.generationLookup
-                ? [
-                    evidence.generationLookup.providerName,
-                    evidence.generationLookup.totalCost != null
-                      ? `$${evidence.generationLookup.totalCost.toFixed(6)}`
-                      : null,
-                    evidence.generationLookup.finishReason,
-                    evidence.generationLookup.providerResponsesCount != null
-                      ? `attempts ${evidence.generationLookup.providerResponsesCount}`
-                      : null,
-                    evidence.generationLookup.error,
-                  ]
-                    .filter(Boolean)
-                    .join(' · ') || 'looked up'
-                : '—'}
-            </dd>
-            <dt>reason</dt>
-            <dd>{evidence.reason}</dd>
-            <dt>error</dt>
-            <dd>{evidence.error ?? '—'}</dd>
-            <dt title="Shadow decision vs live; DIFF means they disagreed">
-              shadow
-            </dt>
-            <dd>
-              {evidence.shadowDecision
-                ? `${evidence.shadowDecision} (${evidence.shadowModel})${
-                    evidence.shadowDiff ? ' · DIFF' : ' · match'
-                  }`
-                : '—'}
-            </dd>
-          </dl>
-          <p
-            className="muted"
-            style={{ marginTop: '0.6rem' }}
-            title="Left: redacted context sent to the model. Right: raw context before redaction."
-          >
-            Context sent to model (redacted) vs raw
+        {!evidence ? (
+          <p className="text-sm text-muted-foreground">
+            Submit a test payment, or select a row in Decision history, to see
+            the rules that were applied.
           </p>
-          <div className="row" style={{ alignItems: 'stretch' }}>
-            <pre className="json" style={{ flex: 1 }}>
-              {JSON.stringify(evidence.contextSent, null, 2)}
-            </pre>
-            <pre className="json" style={{ flex: 1 }}>
-              {JSON.stringify(evidence.contextRaw, null, 2)}
-            </pre>
-          </div>
-        </>
-      )}
-      </div>
-    </section>
+        ) : (
+          <>
+            <dl className="grid gap-x-4 gap-y-2 rounded-lg border bg-muted/40 p-3 font-mono text-xs sm:grid-cols-[auto_1fr]">
+              <Kv
+                label="payment id"
+                title="Id for this spend attempt. Different from request id."
+                value={paymentId ?? '—'}
+              />
+              <Kv
+                label="request id"
+                title="Id for the decision hop. Use this for replay — not the payment id."
+                value={evidence.requestId ?? '—'}
+              />
+              <Kv
+                label="mode / attempt"
+                title="Practice vs live AI, and which attempt served the answer."
+                value={`${evidence.inferenceMode ?? '—'} · ${evidence.hop ?? '—'}`}
+              />
+              <Kv
+                label="path policy"
+                title="Quick rules vs model review for this audience"
+                value={`${evidence.pathPolicy ?? '—'}${
+                  evidence.forceModelPath ? ' · always use AI' : ''
+                }`}
+              />
+              <Kv
+                label="served model"
+                title="Model that produced the decision"
+                value={evidence.model ?? '—'}
+              />
+              <Kv
+                label="served provider"
+                title="Provider named by the decision config"
+                value={evidence.servedProvider ?? '—'}
+              />
+              <Kv
+                label="actor"
+                title="Actor attached to the AI call"
+                value={evidence.inferenceUser ?? '—'}
+              />
+              <Kv
+                label="targeting"
+                title="Why this risk profile got this path / experiment group"
+                value={evidence.targetingReason ?? '—'}
+              />
+              <Kv
+                label="path / experiment"
+                title="Quick rules vs AI review, and experiment group"
+                value={`${evidence.route} · ${evidence.treatment}`}
+              />
+              <Kv
+                label="decision config"
+                title="Decision config key used for prompt and model"
+                value={`${evidence.aiConfigKey ?? '—'} ${
+                  evidence.aiConfigEnabled ? '(enabled)' : ''
+                }`}
+              />
+              <Kv
+                label="prompt preview"
+                title="Short preview of the prompt from the decision config"
+                value={evidence.promptPreview ?? '—'}
+              />
+              <Kv
+                label="latency"
+                value={
+                  evidence.latencyMs == null
+                    ? '—'
+                    : `${evidence.latencyMs}ms`
+                }
+              />
+              <Kv
+                label="tokens"
+                value={`${evidence.promptTokens ?? '—'} / ${evidence.completionTokens ?? '—'}`}
+              />
+              <Kv
+                label="cost"
+                value={
+                  evidence.costUsd == null
+                    ? '—'
+                    : `$${evidence.costUsd.toFixed(6)}`
+                }
+              />
+              <Kv
+                label="evaluation"
+                title="Optional judge evaluation from the decision config"
+                value={evidence.judgeEvaluation ?? '—'}
+              />
+              <Kv label="reason" value={evidence.reason} />
+              <Kv label="error" value={evidence.error ?? '—'} />
+              <Kv
+                label="shadow"
+                title="Shadow decision vs live; DIFF means they disagreed"
+                value={
+                  evidence.shadowDecision
+                    ? `${evidence.shadowDecision} (${evidence.shadowModel})${
+                        evidence.shadowDiff ? ' · DIFF' : ' · match'
+                      }`
+                    : '—'
+                }
+              />
+            </dl>
+            <p
+              className="text-sm text-muted-foreground"
+              title="Left: redacted context sent to the model. Right: raw context before redaction."
+            >
+              Context sent to model (redacted) vs raw
+            </p>
+            <div className="grid gap-3 md:grid-cols-2">
+              <pre className="max-h-56 overflow-auto rounded-lg border bg-muted/50 p-3 font-mono text-[11px] leading-relaxed">
+                {JSON.stringify(evidence.contextSent, null, 2)}
+              </pre>
+              <pre className="max-h-56 overflow-auto rounded-lg border bg-muted/50 p-3 font-mono text-[11px] leading-relaxed">
+                {JSON.stringify(evidence.contextRaw, null, 2)}
+              </pre>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
   )
 }

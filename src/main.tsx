@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { asyncWithLDProvider } from 'launchdarkly-react-client-sdk'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import App from './App'
 import './index.css'
 
@@ -20,7 +21,9 @@ async function boot() {
     )
     root.render(
       <StrictMode>
-        <App ldEnabled={false} />
+        <TooltipProvider>
+          <App ldEnabled={false} />
+        </TooltipProvider>
       </StrictMode>,
     )
     return
@@ -48,7 +51,9 @@ async function boot() {
   root.render(
     <StrictMode>
       <LDProvider>
-        <App ldEnabled />
+        <TooltipProvider>
+          <App ldEnabled />
+        </TooltipProvider>
       </LDProvider>
     </StrictMode>,
   )

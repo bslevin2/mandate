@@ -1,4 +1,11 @@
 import type { ReactNode } from 'react'
+import { Badge } from '@/components/ui/badge'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
 
 type Tone = 'default' | 'live' | 'frozen' | 'warn'
 
@@ -16,18 +23,43 @@ export function StatusChip({
   children,
   tone = 'default',
   tip,
-  className = '',
+  className,
   mono = false,
 }: Props) {
-  const toneClass = tone === 'default' ? '' : ` ${tone}`
-  const monoClass = mono ? ' mono' : ''
-  return (
-    <span
-      className={`status-chip${toneClass}${monoClass} ${className}`.trim()}
-      title={tip}
+  const badge = (
+    <Badge
       role="status"
+      variant={
+        tone === 'frozen'
+          ? 'destructive'
+          : tone === 'live'
+            ? 'default'
+            : tone === 'warn'
+              ? 'secondary'
+              : 'outline'
+      }
+      className={cn(
+        'max-w-full truncate font-normal',
+        mono && 'font-mono text-[11px]',
+        tone === 'live' &&
+          'bg-[color-mix(in_oklch,var(--good),transparent_12%)] text-white hover:bg-[color-mix(in_oklch,var(--good),transparent_12%)]',
+        tone === 'warn' &&
+          'border-[color-mix(in_oklch,var(--warn),transparent_40%)] bg-[color-mix(in_oklch,var(--warn),white_82%)] text-foreground hover:bg-[color-mix(in_oklch,var(--warn),white_82%)]',
+        className,
+      )}
     >
       {children}
-    </span>
+    </Badge>
+  )
+
+  if (!tip) return badge
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex max-w-full">{badge}</span>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-xs text-pretty">{tip}</TooltipContent>
+    </Tooltip>
   )
 }
