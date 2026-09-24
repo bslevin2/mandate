@@ -37,7 +37,7 @@ export function AuditFeed({ rows, tenant, selectedId, onSelect }: Props) {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>time</TableHead>
+                <TableHead>when</TableHead>
                 <TableHead title="Authorize, capture, refund, or related step">
                   phase
                 </TableHead>
@@ -77,7 +77,10 @@ export function AuditFeed({ rows, tenant, selectedId, onSelect }: Props) {
                   title="Load this decision into Why this decision"
                 >
                   <TableCell className="font-mono text-xs">
-                    {new Date(r.ts).toLocaleTimeString()}
+                    {new Date(r.ts).toLocaleString(undefined, {
+                      dateStyle: 'short',
+                      timeStyle: 'medium',
+                    })}
                   </TableCell>
                   <TableCell>{r.phase}</TableCell>
                   <TableCell>

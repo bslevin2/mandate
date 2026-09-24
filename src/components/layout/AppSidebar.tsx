@@ -59,7 +59,7 @@ export function AppSidebar({
             alt="Mandate"
           />
           <div>
-            <div className="text-base font-semibold tracking-tight">Mandate</div>
+            <div className="text-base font-semibold">Mandate</div>
             <p className="text-xs text-muted-foreground">Spend authorization</p>
           </div>
         </div>

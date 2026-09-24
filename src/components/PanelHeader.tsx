@@ -26,7 +26,7 @@ export function PanelHeader({
       <div className="flex items-center gap-2">
         <Heading
           className={cn(
-            'font-semibold tracking-tight text-foreground',
+            'font-semibold text-foreground',
             level === 3 ? 'text-base' : 'text-lg',
           )}
         >

@@ -10,7 +10,7 @@ export function ViewHeader({ title, description, tip }: Props) {
   return (
     <header className="mb-6 space-y-1">
       <div className="flex items-center gap-2">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+        <h1 className="text-2xl font-semibold text-foreground">
           {title}
         </h1>
         {tip ? <InfoTip text={tip} label={`About ${title}`} /> : null}

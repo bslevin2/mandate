@@ -1,7 +1,11 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/geist";
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -37,7 +41,7 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
-  --font-sans: 'Geist Variable', sans-serif;
+  --font-sans: 'IBM Plex Sans', sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
   --font-heading: var(--font-sans);
   --color-chart-5: var(--chart-5);
@@ -64,7 +68,7 @@
   --secondary: oklch(0.95 0.01 240);
   --secondary-foreground: oklch(0.28 0.03 250);
   --muted: oklch(0.95 0.008 240);
-  --muted-foreground: oklch(0.5 0.02 250);
+  --muted-foreground: oklch(0.42 0.02 250);
   --accent: oklch(0.94 0.02 200);
   --accent-foreground: oklch(0.3 0.05 210);
   --destructive: oklch(0.52 0.18 25);
@@ -134,7 +138,7 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply m-0 min-h-screen bg-background font-sans text-foreground antialiased;
+    @apply m-0 min-h-screen bg-background font-sans text-foreground subpixel-antialiased;
   }
   html {
     @apply font-sans;
