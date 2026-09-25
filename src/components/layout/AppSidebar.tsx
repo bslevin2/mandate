@@ -13,6 +13,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
+import type { RemediateAction } from '@/types'
 import { CONSOLE_VIEWS, type ConsoleView } from './views'
 
 const VIEW_ICONS: Record<ConsoleView, typeof Zap> = {
@@ -34,6 +35,9 @@ interface Props {
   activeView: ConsoleView
   onViewChange: (view: ConsoleView) => void
   live: boolean
+  remediating: RemediateAction | null
+  remediateNotice: string | null
+  ldWriteConfigured: boolean
   onRemediate: (kill: boolean) => void
   setupChips: SetupChip[]
   statusSummary: ReactNode
@@ -43,6 +47,9 @@ export function AppSidebar({
   activeView,
   onViewChange,
   live,
+  remediating,
+  remediateNotice,
+  ldWriteConfigured,
   onRemediate,
   setupChips,
   statusSummary,
@@ -90,22 +97,41 @@ export function AppSidebar({
               variant="destructive"
               size="sm"
               className="flex-1"
+              disabled={remediating !== null}
+              title={
+                ldWriteConfigured
+                  ? 'Decline all new spend now and turn decisioner.live off'
+                  : 'Decline all new spend now'
+              }
               onClick={() => onRemediate(true)}
             >
               <OctagonAlert />
-              Stop
+              {remediating === 'stop' ? 'Stopping…' : 'Stop'}
             </Button>
             <Button
               variant="outline"
               size="sm"
               className="flex-1"
-              disabled={live}
+              disabled={live || remediating !== null}
+              title={
+                ldWriteConfigured
+                  ? 'Clear the stop and turn decisioner.live back on'
+                  : 'Clear the emergency stop'
+              }
               onClick={() => onRemediate(false)}
             >
               <Play />
-              Resume
+              {remediating === 'resume' ? 'Resuming…' : 'Resume'}
             </Button>
           </div>
+          {remediateNotice && (
+            <p
+              role="alert"
+              className="mt-2 text-xs leading-snug text-destructive"
+            >
+              {remediateNotice}
+            </p>
+          )}
         </div>
         <div className="hidden flex-wrap gap-1.5 lg:flex">{statusSummary}</div>
       </div>

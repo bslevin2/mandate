@@ -38,7 +38,7 @@ Sidebar + canvas shell. Emergency stop/resume stay in the sidebar; each view is 
 | **Trust** | Ledger integrity break/restore; company isolation |
 | **Signals** | Ops alerts for stop/cost events |
 
-**Kill / remediate:** flip `decisioner.live` off in LaunchDarkly (streams into the UI when a client-side ID is set), fire that flag’s **generic trigger** (turn targeting off), or click **Emergency stop** / `POST /api/remediate`. Dashboard and trigger are the same flag. Emergency stop is a local latch. All paths fail-closed without a page reload.
+**Kill / remediate:** flip `decisioner.live` off in LaunchDarkly (streams into the UI when a client-side ID is set), fire that flag’s **generic trigger** (turn targeting off), or click **Emergency stop** / `POST /api/remediate`. Dashboard and trigger are the same flag. Emergency stop sets a server latch that fail-closes immediately and, when flag writes are configured (`LD_API_TOKEN`, `LD_PROJECT_KEY`, `LD_ENVIRONMENT_KEY`), turns `decisioner.live` off as well; **Resume** clears the latch and turns the flag back on. Without flag writes, Stop and Resume only touch the latch, so a flag turned off in the dashboard has to be turned back on there. All paths fail-closed without a page reload.
 
 **Integrity:** each audit row is chained. **Break seal** mutates a stored tip so the badge shows broken; **Restore ledger** re-seals. Replay another tenant’s `request_id` returns 403.
 
@@ -66,6 +66,7 @@ Three planes: **control** (who gets which policy / kill / experiment / decision 
 ## Security notes
 
 - Keep SDK and provider keys in `.env` (gitignored). Never put provider keys in `VITE_*`.
+- `/api/remediate` is unauthenticated, so anyone who can reach the API can flip `decisioner.live` once `LD_API_TOKEN` is set. Give the token a custom role that can only turn that flag on/off in that one environment.
 - Demo `panDemo` fields are **redacted** before model calls; Evidence shows raw vs sent.
 - Provider keys never leave the server; the client only sees evidence and audit.
 
@@ -86,6 +87,8 @@ See [`.env.example`](.env.example):
 | `VITE_LD_CLIENT_ID` | Browser flag client — enables streaming kill when you flip flags in the dashboard |
 | `LD_SDK_KEY` | Server flag + decision-config evaluation |
 | `LD_AI_CONFIG_KEY` | Decision config key (default `mandate-decisioner`) |
+| `LD_API_TOKEN` | Server-only access token that can update `decisioner.live`, so Emergency stop / Resume flip the flag |
+| `LD_PROJECT_KEY` / `LD_ENVIRONMENT_KEY` | Project and environment for those flag writes — use the environment your SDK key and client-side ID belong to |
 | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | Live inference (server only). At least one for Live AI. |
 | `INFERENCE_DEFAULT_MODEL` | Last-resort model id for local decision-config fallback |
 | `OPS_WEBHOOK_URL` | Optional Slack (or similar) webhook on kill / cost spikes |
@@ -98,7 +101,7 @@ Create these keys in LaunchDarkly (types match the table):
 
 | Flag key | Type | Default | Product behavior |
 |----------|------|---------|------------------|
-| `decisioner.live` | boolean | `true` | Release / remediate. Client listens; when `false` the Decisioner freezes. Server fail-closes. |
+| `decisioner.live` | boolean | `true` | Release / remediate. Client listens; when `false` the Decisioner freezes. Server fail-closes. Keep the off variation `false` — Emergency stop turns targeting off. |
 | `decisioner.route` | string | `fast` or `model` | Which policy path runs. Target by `env`, `risk_tier`, `mcc`, `amount_cents`. Individual: `email = qa@mandate.local`. |
 | `decisioner.experiment` | string | `control` / `treatment` | Experiment treatments; scoreboard + events `auth_approved`, `auth_declined`, `auth_latency_ms`, `auth_cost_usd`. |
 | `capture.live` | boolean | `true` | Optional — gates irreversible capture separately from authorize. |

@@ -20,6 +20,7 @@ import type {
   AuditRow,
   AuthRequest,
   Evidence,
+  RemediateAction,
   RouteMode,
 } from './types'
 
@@ -28,6 +29,7 @@ interface Status {
   route: RouteMode
   treatment: string
   captureLive: boolean
+  localKill?: boolean
   circuitOpen: boolean
   sessionSpendUsd: number
   networkDelayMs: number
@@ -37,6 +39,7 @@ interface Status {
   inferenceMode?: 'live' | 'simulator'
   ldClientConfigured?: boolean
   ldSdkConfigured?: boolean
+  ldWriteConfigured?: boolean
   providerConfigured?: boolean
   webhookConfigured?: boolean
   streamingHint?: string
@@ -51,6 +54,12 @@ interface Status {
   tipHash?: string | null
   pathPolicy?: string | null
   forceModelPath?: boolean
+}
+
+interface RemediateResponse {
+  localKill: boolean
+  ldWrite: { ok: boolean; skipped?: boolean; error?: string }
+  hint: string
 }
 
 function emptyEvidence(
@@ -145,8 +154,13 @@ function MandateConsole({
   const [shadow, setShadow] = useState(false)
   const [replayId, setReplayId] = useState('')
   const [clientLive, setClientLive] = useState(true)
-  const [clientRoute, setClientRoute] = useState<RouteMode | null>(null)
   const [ldReady, setLdReady] = useState(false)
+  const [remediating, setRemediating] = useState<RemediateAction | null>(null)
+  const [remediateNotice, setRemediateNotice] = useState<{
+    action: RemediateAction
+    text: string
+  } | null>(null)
+  const [controlsError, setControlsError] = useState<string | null>(null)
 
   const contextAttrs = useMemo(
     () => ({ ...audience.context, tenant }),
@@ -174,8 +188,6 @@ function MandateConsole({
   const applyClientFlags = useCallback(() => {
     if (!ldClient) return
     setClientLive(ldClient.variation('decisioner.live', true) as boolean)
-    const route = String(ldClient.variation('decisioner.route', 'fast'))
-    setClientRoute(route === 'fast' ? 'fast' : 'model')
   }, [ldClient])
 
   const identify = useCallback(async () => {
@@ -223,12 +235,14 @@ function MandateConsole({
     const res = await fetch(
       `/api/status?context=${q}&audienceId=${audienceId}`,
     )
+    if (!res.ok) return null
     const data = (await res.json()) as Status
     setStatus(data)
     if (data.inferenceMode) setInferenceMode(data.inferenceMode)
     if (typeof data.breakPipe === 'boolean') setBreakPipe(data.breakPipe)
     if (typeof data.forceModelPath === 'boolean')
       setForceModelPath(data.forceModelPath)
+    return data
   }, [contextAttrs, audienceId])
 
   useEffect(() => {
@@ -283,11 +297,21 @@ function MandateConsole({
       budgetUsd?: number | null
       forceModelPath?: boolean
     }) => {
-      await fetch('/api/controls', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(patch),
-      })
+      try {
+        const res = await fetch('/api/controls', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(patch),
+        })
+        setControlsError(
+          res.ok
+            ? null
+            : `Couldn’t save advanced settings (HTTP ${res.status}).`,
+        )
+      } catch {
+        setControlsError('Couldn’t reach the API to save advanced settings.')
+        return
+      }
       await refreshStatus()
     },
     [refreshStatus],
@@ -409,14 +433,55 @@ function MandateConsole({
     }
   }
 
+  const pollDecisionerLive = async (attempts: number) => {
+    for (let i = 1; ; i++) {
+      const next = await refreshStatus()
+      applyClientFlags()
+      const flagOn =
+        !ldClient || (ldClient.variation('decisioner.live', true) as boolean)
+      if (next?.decisionerLive && flagOn) return true
+      if (i >= attempts) return false
+      await new Promise((resolve) => setTimeout(resolve, 500))
+    }
+  }
+
   const onRemediate = async (kill: boolean) => {
-    await fetch('/api/remediate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kill }),
-    })
-    await refreshStatus()
-    await refreshOps()
+    const action: RemediateAction = kill ? 'stop' : 'resume'
+    setRemediating(action)
+    setRemediateNotice(null)
+    try {
+      const res = await fetch('/api/remediate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kill }),
+      })
+      if (!res.ok) {
+        setRemediateNotice({
+          action,
+          text: `${kill ? 'Emergency stop' : 'Resume'} failed (HTTP ${res.status}).`,
+        })
+        await refreshStatus()
+        return
+      }
+      const { ldWrite, hint } = (await res.json()) as RemediateResponse
+      // A flag write reaches the server SDK and the browser stream a moment after it lands.
+      const live = await pollDecisionerLive(!kill && ldWrite.ok ? 10 : 1)
+      if (ldWrite.error) {
+        setRemediateNotice({ action, text: hint })
+      } else if (!kill && !live) {
+        setRemediateNotice({
+          action,
+          text: ldWrite.ok
+            ? 'decisioner.live was turned on, but it still evaluates to false for this profile. Check the flag’s targeting, and that LD_ENVIRONMENT_KEY matches your SDK key’s environment.'
+            : hint,
+        })
+      }
+    } catch {
+      setRemediateNotice({ action, text: 'Couldn’t reach the Mandate API.' })
+    } finally {
+      setRemediating(null)
+      void refreshOps()
+    }
   }
 
   const onReplay = async () => {
@@ -485,6 +550,12 @@ function MandateConsole({
   )
   const engineLive =
     clientLive && status.decisionerLive && !status.circuitOpen
+  const flagLive =
+    clientLive && Boolean(status.localKill || status.decisionerLive)
+  const visibleNotice =
+    remediateNotice && !(remediateNotice.action === 'resume' && engineLive)
+      ? remediateNotice.text
+      : null
 
   const setupChips = [
     {
@@ -555,6 +626,9 @@ function MandateConsole({
       activeView={view}
       onViewChange={setView}
       live={engineLive}
+      remediating={remediating}
+      remediateNotice={visibleNotice}
+      ldWriteConfigured={Boolean(status.ldWriteConfigured)}
       onRemediate={(kill) => void onRemediate(kill)}
       setupChips={setupChips}
       statusSummary={statusSummary}
@@ -604,13 +678,22 @@ function MandateConsole({
           onReplayId={setReplayId}
           onReplay={() => void onReplay()}
           providerConfigured={Boolean(status.providerConfigured)}
+          controlsError={controlsError}
         />
       )}
 
       {view === 'engine' && (
         <DecisionerPane
           live={engineLive}
-          route={clientRoute ?? status.route}
+          localKill={Boolean(status.localKill)}
+          flagLive={flagLive}
+          ldConfigured={Boolean(
+            status.ldSdkConfigured || status.ldClientConfigured,
+          )}
+          ldWriteConfigured={Boolean(status.ldWriteConfigured)}
+          remediating={remediating}
+          notice={visibleNotice}
+          route={status.route}
           treatment={status.treatment}
           captureLive={status.captureLive}
           circuitOpen={status.circuitOpen}

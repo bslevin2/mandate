@@ -1,4 +1,4 @@
-import type { RouteMode } from '@/types'
+import type { RemediateAction, RouteMode } from '@/types'
 import { PanelHeader } from './PanelHeader'
 import { StatusChip } from './StatusChip'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -8,6 +8,12 @@ import { OctagonAlert, Play } from 'lucide-react'
 
 interface Props {
   live: boolean
+  localKill: boolean
+  flagLive: boolean
+  ldConfigured: boolean
+  ldWriteConfigured: boolean
+  remediating: RemediateAction | null
+  notice: string | null
   route: RouteMode
   treatment: string
   captureLive: boolean
@@ -25,8 +31,49 @@ interface Props {
   onRemediate: (kill: boolean) => void
 }
 
+const FLAG_WRITE_ENV = 'LD_API_TOKEN, LD_PROJECT_KEY, and LD_ENVIRONMENT_KEY'
+
+function controlsSummary(ldConfigured: boolean, ldWriteConfigured: boolean) {
+  if (ldWriteConfigured) {
+    return 'Stop declines all new spend on the server instantly and turns decisioner.live off in the flag dashboard. Resume turns it back on.'
+  }
+  if (ldConfigured) {
+    return `Stop declines all new spend on the server instantly but doesn’t change decisioner.live in the flag dashboard. Set ${FLAG_WRITE_ENV} so Stop and Resume flip it.`
+  }
+  return 'Freeze the decisioner for all new spend without a deploy. Resume when ready.'
+}
+
+function stoppedDetail({
+  localKill,
+  flagLive,
+  circuitOpen,
+  ldWriteConfigured,
+}: Pick<Props, 'localKill' | 'flagLive' | 'circuitOpen' | 'ldWriteConfigured'>) {
+  if (!localKill && flagLive) {
+    return circuitOpen
+      ? 'The safety breaker is open until conditions recover.'
+      : ''
+  }
+  if (flagLive) return 'Emergency stop is on. Resume approvals clears it.'
+  const cause = localKill
+    ? 'Emergency stop is on and decisioner.live is off.'
+    : 'decisioner.live is off.'
+  if (ldWriteConfigured) {
+    return `${cause} Resume approvals ${localKill ? 'clears the stop and turns the flag back on' : 'turns it back on'}.`
+  }
+  return localKill
+    ? `${cause} Turn the flag back on in the dashboard and use Resume approvals to clear the emergency stop.`
+    : `${cause} Turn it back on in the flag dashboard — Resume can’t change the flag without ${FLAG_WRITE_ENV}.`
+}
+
 export function DecisionerPane({
   live,
+  localKill,
+  flagLive,
+  ldConfigured,
+  ldWriteConfigured,
+  remediating,
+  notice,
   route,
   treatment,
   captureLive,
@@ -41,6 +88,12 @@ export function DecisionerPane({
   const pathLabel = route === 'fast' ? 'quick rules' : 'AI review'
   const amount = `$${(preview.amountCents / 100).toFixed(2)}`
   const profileLine = `Profile defaults: ${preview.env} · ${preview.riskTier} risk · MCC ${preview.mcc} · ${amount} → path ${pathLabel} · group ${treatment}`
+  const stopped = stoppedDetail({
+    localKill,
+    flagLive,
+    circuitOpen,
+    ldWriteConfigured,
+  })
 
   return (
     <Card>
@@ -48,7 +101,7 @@ export function DecisionerPane({
         <PanelHeader
           title="Authorization engine"
           subheader="Live status and what the next test payment will use"
-          tip="Status chips reflect live flags. Emergency stop/resume change engine state for all new spend. The preview is based on the selected risk profile — not a past payment."
+          tip="Status chips reflect live flags and the server’s emergency stop. The preview is based on the selected risk profile — not a past payment."
         />
         <p className="text-sm text-muted-foreground">
           Status updates when live flags change, when you stop/resume, or every
@@ -61,7 +114,7 @@ export function DecisionerPane({
             tip={
               live
                 ? 'The engine is accepting spend authorizations.'
-                : 'Stopped — all new spend is declined. Use Resume approvals here, or flip the live flag in the dashboard.'
+                : `Stopped — all new spend is declined. ${stopped}`
             }
           >
             {live ? 'Accepting spend' : 'Stopped — all new spend declined'}
@@ -98,29 +151,31 @@ export function DecisionerPane({
           <AlertDescription className="space-y-3">
             <p>
               {live
-                ? 'Freeze the decisioner for all new spend without a deploy. Resume when ready.'
-                : 'New payments decline on the server even if someone bypasses this screen.'}
+                ? controlsSummary(ldConfigured, ldWriteConfigured)
+                : `New payments decline on the server even if someone bypasses this screen. ${stopped}`}
             </p>
             <div className="flex flex-wrap gap-2">
               <Button
                 variant="destructive"
                 size="sm"
+                disabled={remediating !== null}
                 onClick={() => onRemediate(true)}
               >
                 <OctagonAlert />
-                Emergency stop
+                {remediating === 'stop' ? 'Stopping…' : 'Emergency stop'}
               </Button>
               <Button
                 variant="outline"
                 size="sm"
-                disabled={live}
+                disabled={live || remediating !== null}
                 title={live ? 'Approvals are already running.' : undefined}
                 onClick={() => onRemediate(false)}
               >
                 <Play />
-                Resume approvals
+                {remediating === 'resume' ? 'Resuming…' : 'Resume approvals'}
               </Button>
             </div>
+            {notice && <p className="font-medium text-destructive">{notice}</p>}
           </AlertDescription>
         </Alert>
 
@@ -144,8 +199,7 @@ export function DecisionerPane({
           </p>
           {!live ? (
             <p className="text-sm text-muted-foreground">
-              Authorization is stopped. Use <strong>Resume approvals</strong> or
-              flip the live flag in the dashboard.
+              Authorization is stopped — the next payment will be declined.
             </p>
           ) : route === 'fast' ? (
             <p className="text-sm text-muted-foreground">

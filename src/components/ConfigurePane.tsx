@@ -46,6 +46,7 @@ interface Props {
   onReplayId: (v: string) => void
   onReplay: () => void
   providerConfigured: boolean
+  controlsError: string | null
 }
 
 function CheckRow({
@@ -157,6 +158,7 @@ export function ConfigurePane({
   onReplayId,
   onReplay,
   providerConfigured,
+  controlsError,
 }: Props) {
   const audience = AUDIENCE_LIST.find((a) => a.id === audienceId)!
 
@@ -240,6 +242,11 @@ export function ConfigurePane({
                 These apply to the next submit — not to a payment you are
                 inspecting in Last payment.
               </p>
+              {controlsError && (
+                <p role="alert" className="text-sm font-medium text-destructive">
+                  {controlsError}
+                </p>
+              )}
 
               <div className="space-y-3">
                 <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">

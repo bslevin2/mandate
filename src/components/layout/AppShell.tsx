@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import type { RemediateAction } from '@/types'
 import { AppSidebar, type SetupChip } from './AppSidebar'
 import { ViewHeader } from './ViewHeader'
 import { CONSOLE_VIEWS, type ConsoleView } from './views'
@@ -7,6 +8,9 @@ interface Props {
   activeView: ConsoleView
   onViewChange: (view: ConsoleView) => void
   live: boolean
+  remediating: RemediateAction | null
+  remediateNotice: string | null
+  ldWriteConfigured: boolean
   onRemediate: (kill: boolean) => void
   setupChips: SetupChip[]
   statusSummary: ReactNode
@@ -17,6 +21,9 @@ export function AppShell({
   activeView,
   onViewChange,
   live,
+  remediating,
+  remediateNotice,
+  ldWriteConfigured,
   onRemediate,
   setupChips,
   statusSummary,
@@ -30,6 +37,9 @@ export function AppShell({
         activeView={activeView}
         onViewChange={onViewChange}
         live={live}
+        remediating={remediating}
+        remediateNotice={remediateNotice}
+        ldWriteConfigured={ldWriteConfigured}
         onRemediate={onRemediate}
         setupChips={setupChips}
         statusSummary={statusSummary}

@@ -2,6 +2,8 @@ export type Decision = 'approve' | 'decline'
 
 export type RouteMode = 'fast' | 'model'
 
+export type RemediateAction = 'stop' | 'resume'
+
 export type AudienceId =
   | 'sandbox-low'
   | 'prod-high'

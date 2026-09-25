@@ -22,7 +22,10 @@ import {
   evaluateFlags,
   getLocalKill,
   initLd,
+  ldWriteConfigured,
+  setDecisionerLiveFlag,
   setLocalKill,
+  type FlagWriteResult,
 } from './ld.js'
 import {
   hasProviderKey,
@@ -91,6 +94,7 @@ app.get('/api/status', async (req, res) => {
     inferenceMode,
     ldClientConfigured: Boolean(process.env.VITE_LD_CLIENT_ID?.trim()),
     ldSdkConfigured: Boolean(process.env.LD_SDK_KEY?.trim()),
+    ldWriteConfigured: ldWriteConfigured(),
     providerConfigured: hasProviderKey(),
     webhookConfigured: Boolean(process.env.OPS_WEBHOOK_URL?.trim()),
     aiConfigKey: ai.key,
@@ -182,24 +186,37 @@ app.post('/api/controls', (req, res) => {
   res.json(next)
 })
 
+function remediateHint(kill: boolean, ldWrite: FlagWriteResult): string {
+  if (ldWrite.ok) {
+    return kill
+      ? 'Stopped: local kill on and decisioner.live turned off in LaunchDarkly.'
+      : 'Resumed: local kill off and decisioner.live turned on in LaunchDarkly.'
+  }
+  const flag = ldWrite.skipped
+    ? 'decisioner.live was not changed — set LD_API_TOKEN, LD_PROJECT_KEY, and LD_ENVIRONMENT_KEY so Stop and Resume flip it.'
+    : `Turning decisioner.live ${kill ? 'off' : 'on'} in LaunchDarkly failed (${ldWrite.error}).`
+  return kill
+    ? `Stopped locally — the server fail-closes. ${flag}`
+    : `Local kill off. ${flag} If decisioner.live is off in LaunchDarkly, approvals stay stopped until it is turned on there.`
+}
+
 /**
- * Remediate trigger — flips local kill latch (fail-closed) and fires ops webhook.
- * Prefer flipping decisioner.live in the flag dashboard so the client streams;
- * this endpoint is the curl/browser path when the dashboard is unavailable.
+ * Emergency stop / resume. The local latch fail-closes the server immediately; the
+ * decisioner.live write keeps the flag dashboard and streaming clients in sync.
  */
 app.post('/api/remediate', async (req, res) => {
   const kill = req.body?.kill !== false
   setLocalKill(kill)
+  const ldWrite = await setDecisionerLiveFlag(!kill)
   const signal = await fireOpsWebhook({
     event: kill ? 'remediate_kill' : 'remediate_restore',
     source: 'api/remediate',
   })
   res.json({
     localKill: getLocalKill(),
+    ldWrite,
     opsSignal: signal,
-    hint: kill
-      ? 'Local kill ON — server fail-closes. Also flip decisioner.live off in the flag dashboard for streaming UI.'
-      : 'Local kill OFF. Flip decisioner.live on in the flag dashboard to restore the UI decisioner.',
+    hint: remediateHint(kill, ldWrite),
   })
 })
 

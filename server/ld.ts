@@ -1,5 +1,5 @@
 /**
- * Server-side flag evaluation and control-plane client init.
+ * Server-side flag evaluation, control-plane client init, and the kill-switch flag write.
  * Decision-config inspect / invoke live in inference.ts.
  * See README Configuration for flag keys and decision config.
  */
@@ -20,7 +20,7 @@ export interface FlagSnapshot {
 let client: ld.LDClient | null = null
 let ready = false
 
-/** Local kill latch used by /api/remediate when the flag dashboard is unavailable. */
+/** Kill latch set by /api/remediate. Fail-closes immediately, before a flag write streams back. */
 let localKill = false
 
 export function setLocalKill(v: boolean) {
@@ -29,6 +29,72 @@ export function setLocalKill(v: boolean) {
 
 export function getLocalKill() {
   return localKill
+}
+
+export interface FlagWriteResult {
+  ok: boolean
+  skipped?: boolean
+  error?: string
+}
+
+function flagWriteEnv() {
+  const token = process.env.LD_API_TOKEN?.trim()
+  const projectKey = process.env.LD_PROJECT_KEY?.trim()
+  const environmentKey = process.env.LD_ENVIRONMENT_KEY?.trim()
+  return token && projectKey && environmentKey
+    ? { token, projectKey, environmentKey }
+    : null
+}
+
+export function ldWriteConfigured(): boolean {
+  return flagWriteEnv() !== null
+}
+
+/**
+ * Turns decisioner.live targeting on or off. SDK keys can only evaluate flags, so this
+ * needs a REST access token. Targeting off serves the off variation, which must be `false`.
+ */
+export async function setDecisionerLiveFlag(
+  live: boolean,
+): Promise<FlagWriteResult> {
+  const env = flagWriteEnv()
+  if (!env) return { ok: false, skipped: true }
+  try {
+    const res = await fetch(
+      `https://app.launchdarkly.com/api/v2/flags/${encodeURIComponent(env.projectKey)}/decisioner.live`,
+      {
+        method: 'PATCH',
+        headers: {
+          Authorization: env.token,
+          'Content-Type':
+            'application/json; domain-model=launchdarkly.semanticpatch',
+        },
+        body: JSON.stringify({
+          environmentKey: env.environmentKey,
+          comment: live
+            ? 'Mandate console: resume approvals'
+            : 'Mandate console: emergency stop',
+          instructions: [{ kind: live ? 'turnFlagOn' : 'turnFlagOff' }],
+        }),
+        signal: AbortSignal.timeout(5000),
+      },
+    )
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as {
+        message?: string
+      } | null
+      return {
+        ok: false,
+        error: `HTTP ${res.status}${body?.message ? `: ${body.message}` : ''}`,
+      }
+    }
+    return { ok: true }
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    }
+  }
 }
 
 export function toLdContext(attrs: LdContextAttrs): ld.LDContext {
@@ -93,7 +159,7 @@ export async function evaluateFlags(
     decisionerLive: decisionerLive && !localKill,
     route,
     treatment,
-    captureLive,
+    captureLive: captureLive && !localKill,
     spendCapCents,
     source: 'launchdarkly',
   }
